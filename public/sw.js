@@ -1,8 +1,8 @@
 // Офлайн-кэш общий для всех расписаний. Меняй VERSION, чтобы сбросить кэш у всех.
-const VERSION = 'v12';
+const VERSION = 'v13';
 const CACHE = 'schedule-' + VERSION;
 // Страницы людей (/nurali/, /nurbek/…) кэшируются при первом открытии.
-const ASSETS = ['./', './styles.css', './app.js', './map.js', './map/floors.json',
+const ASSETS = ['./', './styles.css', './app.js', './stats.js', './map.js', './map/floors.json',
                 './icons/icon-192.png', './icons/icon-512.png', './icons/icon-180.png']
   .map(p => new URL(p, self.registration.scope).pathname);
 

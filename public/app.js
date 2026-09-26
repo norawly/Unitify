@@ -560,6 +560,92 @@ function closeCard(){
 $("veil").onclick=closeCard;
 document.addEventListener("keydown",function(e){ if(e.key==="Escape") closeCard(); });
 
+/* ============ статистика типовой учебной недели ============ */
+var statsHost=$("statsView"), statsReturnFocus=null;
+function statsTime(m){
+  if(!m) return "0 мин";
+  var h=Math.floor(m/60), r=m%60;
+  return (h?h+" ч":"")+(r?(h?" ":"")+r+" мин":"");
+}
+function statsPct(part,total){return total?Math.round(part/total*100):0;}
+function statsBar(part,total){return part&&total?Math.max(2,part/total*100):0;}
+function statsPanel(){
+  var a=window.ScheduleStats.calculate(S);
+  var maxDay=Math.max.apply(null,a.days.map(function(d){return d.minutes;}))||1;
+  var busy=a.days.reduce(function(best,d){return !best||d.minutes>best.minutes?d:best;},null);
+  var gap=a.days.reduce(function(best,d){return !best||d.window>best.window?d:best;},null);
+  var dayBars=a.days.slice(0,ND).map(function(d){
+    var date=FULL[d.key], span=d.first===null?"Свободно":hhmm(d.first)+"–"+hhmm(d.last);
+    return '<div class="sb-row" title="'+esc(date+": "+statsTime(d.minutes)+" занятий")+'">'+
+      '<span class="sb-name">'+esc(SHORT[d.key])+'</span>'+
+      '<div class="sb-track" role="img" aria-label="'+esc(date+": "+statsTime(d.minutes)+", онлайн "+statsTime(d.online))+'">'+
+        '<span class="sb-fill offline" style="width:'+statsBar(d.offline,maxDay)+'%"></span>'+
+        '<span class="sb-fill online" style="width:'+statsBar(d.online,maxDay)+'%"></span></div>'+
+      '<b class="sb-value">'+(d.minutes?statsTime(d.minutes):"—")+'</b>'+
+      '<small class="sb-span">'+esc(span)+'</small></div>';
+  }).join("");
+  var fs=[
+    {key:"lecture",name:"Лекции",color:"#3b68e0"},
+    {key:"practice",name:"Практика",color:"#1a9e5f"},
+    {key:"lecture-online",name:"Лекции онлайн",color:"#7c5cf0"},
+    {key:"practice-online",name:"Практика онлайн",color:"#c97a10"},
+    {key:"other",name:"Другое",color:"#6b7280"},
+    {key:"other-online",name:"Другое онлайн",color:"#9ca3af"}
+  ].filter(function(f){return a.formats.get(f.key);});
+  var at=0, stops=[];
+  fs.forEach(function(f){ var end=at+(a.formats.get(f.key)||0)/Math.max(a.total,1)*100;
+    stops.push(f.color+" "+at.toFixed(2)+"% "+end.toFixed(2)+"%"); at=end; });
+  var wheel=stops.length?"conic-gradient("+stops.join(",")+")":"var(--line)";
+  var types=fs.map(function(f){return '<div class="sf-item"><i style="background:'+f.color+'"></i><span>'+f.name+'</span>'+
+    '<b>'+statsTime(a.formats.get(f.key))+'</b></div>';}).join("");
+  var subjects=a.subjects.map(function(s){
+    var share=statsPct(s.minutes,a.total);
+    return '<tr><th scope="row"><span>'+esc(s.name)+'</span><i class="ss-meter"><i style="width:'+share+'%"></i></i></th>'+
+      '<td>'+statsTime(s.minutes)+'</td><td>'+s.sessions+'</td><td>'+share+'%</td></tr>';
+  }).join("");
+  var rooms=a.rooms.slice(0,5).map(function(r,i){return '<li><span class="sr-rank">'+(i+1)+'</span><span class="sr-label"><b>'+esc(roomShort(r.name))+'</b>'+
+    (bldg({building:r.building})?'<small>'+esc(r.building)+'</small>':"")+'</span><span class="sr-time">'+statsTime(r.minutes)+'</span></li>';}).join("");
+  return '<div class="stats-inner"><p class="stats-lead">'+esc(WHO||S.group||"Расписание")+
+    ' · типовая неделя занятий · '+esc(T.name||S.period||"")+'</p>'+
+    '<div class="stats-kpis">'+
+      '<div class="sk"><small>Время занятий</small><strong>'+statsTime(a.total)+'</strong><span>без коротких перерывов</span></div>'+
+      '<div class="sk"><small>Занятия</small><strong>'+a.sessions+'</strong><span>'+a.rawLessons+' академических пар</span></div>'+
+      '<div class="sk"><small>Окна от часа</small><strong>'+statsTime(a.window)+'</strong><span>'+a.windows+' за неделю</span></div>'+
+      '<div class="sk"><small>Онлайн</small><strong>'+statsPct(a.online,a.total)+'%</strong><span>'+statsTime(a.online)+' занятий</span></div>'+
+    '</div>'+
+    '<div class="stats-grid">'+
+      '<section class="sp sp-days"><div class="sp-title"><div><h3>Загрузка по дням</h3><p>Чистое время занятий · часы начала и конца</p></div></div>'+dayBars+
+        '<div class="sp-key"><i class="offline"></i>В университете <i class="online"></i>Онлайн</div></section>'+
+      '<section class="sp sp-format"><div class="sp-title"><div><h3>Формат недели</h3><p>Доля по длительности занятий</p></div></div>'+
+        '<div class="sf-layout"><div class="sf-ring" role="img" aria-label="Распределение форматов занятий" style="background:'+wheel+'"><div><b>'+statsTime(a.total)+'</b><small>в неделю</small></div></div>'+
+        '<div class="sf-list">'+(types||'<span>Занятий нет</span>')+'</div></div></section>'+
+      '<section class="sp sp-subjects"><div class="sp-title"><div><h3>Предметы</h3><p>Сколько времени занимает каждый за неделю</p></div></div>'+
+        '<div class="ss-scroll"><table class="ss-table"><thead><tr><th scope="col">Предмет</th><th scope="col">Время</th><th scope="col">Занятий</th><th scope="col">Доля</th></tr></thead><tbody>'+subjects+'</tbody></table></div></section>'+
+      '<section class="sp sp-rooms"><div class="sp-title"><div><h3>Частые кабинеты</h3><p>Где проходит больше всего времени</p></div></div>'+
+        (rooms?'<ol class="sr-list">'+rooms+'</ol>':'<p class="sp-empty">Очных занятий нет</p>')+'</section>'+
+    '</div>'+
+    '<p class="stats-foot">'+(busy&&busy.minutes?'Самый насыщенный день — '+FULL[busy.key].toLowerCase()+' ('+statsTime(busy.minutes)+'). ':'')+
+      (gap&&gap.window?'Больше всего окон — '+FULL[gap.key].toLowerCase()+' ('+statsTime(gap.window)+'). ':'')+
+      'Показатели рассчитаны по повторяющемуся расписанию учебной недели; экзамены, каникулы, посещаемость и дедлайны сюда не входят.</p></div>';
+}
+function openStats(){
+  closeCard();
+  statsReturnFocus=document.activeElement;
+  $("statsContent").innerHTML=statsPanel();
+  statsHost.classList.add("open"); statsHost.setAttribute("aria-hidden","false");
+  document.body.classList.add("locked");
+  $("statsClose").focus();
+}
+function closeStats(){
+  if(!statsHost.classList.contains("open")) return;
+  statsHost.classList.remove("open"); statsHost.setAttribute("aria-hidden","true");
+  document.body.classList.remove("locked");
+  if(statsReturnFocus&&statsReturnFocus.focus) statsReturnFocus.focus();
+}
+$("statsBtn").onclick=openStats;
+$("statsClose").onclick=closeStats;
+document.addEventListener("keydown",function(e){ if(e.key==="Escape") closeStats(); });
+
 /* ============ тема ============ */
 (function(){
   var btn=$("themeBtn");
@@ -632,6 +718,7 @@ $("todayBtn").querySelector(".tt").textContent=fmtShort(new Date());
   var q=new URLSearchParams(location.search), day=q.get("day"), room=q.get("room");
   if(day) for(var i=0;i<DAYS.length;i++) if(iso(DAYS[i].date)===day){ goWeek(Math.floor(i/ND)); goPage(i,false); break; }
   if(room && window.CampusMap) setTimeout(function(){ CampusMap.open(room); },200);
+  if(q.get("stats")==="1") openStats();
   /* открыт внутри Telegram как мини-приложение — растягиваем на весь экран */
   if(/tgWebApp/.test(location.hash+location.search)){
     var tgs=document.createElement("script");

@@ -110,7 +110,14 @@ shown = [p for p in people if not p[3]]     # скрытые — только п
 
 for slug, owner, _, _hidden in people:
     title = f"Schedule · {owner}"
-    page = TEMPLATE.replace("{{title}}", html.escape(title)).replace("{{owner}}", html.escape(owner))
+    src = open(os.path.join(PUB, slug, "schedule.js"), encoding="utf-8").read()
+    alias = field(src, "aliasOf")
+    if alias and not re.fullmatch(r"[a-z0-9-]+", alias):
+        raise ValueError(f"Некорректный aliasOf для {slug}: {alias}")
+    base_script = f'<script src="../{alias}/schedule.js"></script>\n' if alias else ""
+    page = (TEMPLATE.replace("{{title}}", html.escape(title))
+                    .replace("{{owner}}", html.escape(owner))
+                    .replace("{{base_script}}", base_script))
     write(os.path.join(PUB, slug, "index.html"), page)
     write(os.path.join(PUB, slug, "manifest.webmanifest"), manifest(owner))
 
