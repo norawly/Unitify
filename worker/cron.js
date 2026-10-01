@@ -13,7 +13,9 @@ const DUE_LEADS = [24 * 60, 2 * 60];   // о дедлайне напоминае
 
 export async function runCron(env, source = "cron") {
   if (!env.TELEGRAM_TOKEN || !env.DB) return;
-  await db.setMeta(env, "tick_last", `${new Date().toISOString()} ${source}`);
+  /* метку времени пишем раз в пять минут: на бесплатном D1 важен каждый лишний запрос на запись */
+  const nowMin = Math.floor(Date.now() / 60000);
+  if (nowMin % 5 === 0) await db.setMeta(env, "tick_last", `${new Date().toISOString()} ${source}`);
   const hook = await ensureWebhook(env);
   if (!hook.ok) console.log("webhook не настроен:", hook.step, hook.error_code, hook.description);
 
@@ -60,12 +62,13 @@ export async function runCron(env, source = "cron") {
       }
     }
 
-    /* карточка прошлой пары сама переписывается, когда пара началась или закончилась */
-    await M.tidy(env, u.chat_id, load).catch(() => {});
+    /* карточки пересчитываем не каждую минуту, а когда пара началась или закончилась */
+    if (today.some(g => now.min - g.rs === 1 || now.min - g.re === 1))
+      await M.tidy(env, u.chat_id, load).catch(() => {});
   }
 
   /* календари Moodle — по кругу, не чаще раза в минуту на человека */
-  for (const u of await db.calendarUsers(env, Date.now() - 55000)) {
+  for (const u of await db.calendarUsers(env)) {
     if (budget <= 0) break;
     budget -= 2;
     await checkCalendar(env, u, now).catch(e => console.log("moodle", u.chat_id, String(e)));
@@ -98,7 +101,7 @@ async function morning(env, u, S, today, now) {
   const soon = (await moodle.upcoming(env, u.chat_id, Date.now(), 20))
     .filter(d => d.due < Date.now() + 2 * 86400000);
   await post(env, u.chat_id, { kind: "due", markup: menuKeyboard(env, u), text: soon.length
-    ? `${L.due_soon_head}\n\n${X.deadlinesText(soon, Date.now(), lang, off).split("\n\n").slice(1).join("\n\n")}`
+    ? X.deadlinesText(soon, Date.now(), lang, off, L.due_soon_head)
     : L.due_none_soon });
 }
 

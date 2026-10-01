@@ -126,26 +126,24 @@ export function dueIn(due, now, lang) {
   return L.due_in(durIn(left, lang));
 }
 
-export function deadlinesText(list, now, lang, off = 300) {
+/* Дедлайны — списком по времени: первым то, что сдавать раньше всего. */
+export function deadlinesText(list, now, lang, off = 300, head = null) {
   const L = dict(lang);
+  const title = head || `${L.deadlines} · ${list.length}`;
   if (!list.length) return `${L.deadlines}\n\n${L.no_deadlines}`;
-  const when = d => {
-    const at = new Date(d.due + off * 60000);          // Moodle отдаёт UTC, показываем по Астане
-    return `${at.getUTCDate()} ${L.monthsShort[at.getUTCMonth()]}, ` +
-      `${String(at.getUTCHours()).padStart(2, "0")}:${String(at.getUTCMinutes()).padStart(2, "0")}`;
-  };
-  /* по предметам: сначала тот, где сдавать раньше всего */
-  const groups = new Map();
-  for (const d of list) {
-    const key = d.subject || "—";
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(d);
-  }
-  const body = [...groups].map(([subj, items]) =>
-    `📘 <b>${esc(subj)}</b>\n` + items.map(d =>
-      `   • ${esc(String(d.title).replace(/ is due$/i, ""))} — ${when(d)} · <i>${dueIn(d.due, now, lang)}</i>`).join("\n")
-  ).join("\n\n");
-  return `${L.deadlines} · ${list.length}\n\n${body}`;
+
+  const today = new Date(now + off * 60000).toISOString().slice(0, 10);
+  const body = [...list].sort((a, b) => a.due - b.due).map(d => {
+    const at = new Date(d.due + off * 60000);            // Moodle отдаёт UTC, показываем по Астане
+    const iso = at.toISOString().slice(0, 10);
+    const day = iso === today ? L.today
+      : iso === T.isoAdd(today, 1) ? L.tomorrow
+      : `${at.getUTCDate()} ${L.monthsShort[at.getUTCMonth()]}`;
+    const hhmm = `${String(at.getUTCHours()).padStart(2, "0")}:${String(at.getUTCMinutes()).padStart(2, "0")}`;
+    return `⏳ <b>${dueIn(d.due, now, lang)}</b> · ${day}, ${hhmm}\n` +
+           `${esc(String(d.title).replace(/ is due$/i, ""))} · <i>${esc(d.subject || "")}</i>`;
+  }).join("\n\n");
+  return `${title}\n\n${body}`;
 }
 
 export const who = u => esc([u.name, u.username ? "@" + u.username : ""].filter(Boolean).join(" ")) || String(u.chat_id);

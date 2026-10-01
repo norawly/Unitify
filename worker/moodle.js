@@ -50,37 +50,49 @@ async function hashOf(text) {
   return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
 }
 
+/* Отпечаток берём только по самим заданиям: Moodle в каждом ответе меняет служебные
+   метки времени, и отпечаток всего файла был бы новым каждую минуту — база переписывалась зря. */
+const fingerprint = events => events.filter(isDeadline)
+  .map(e => `${e.uid}|${e.due}|${e.title}|${e.descr || ""}`).sort().join("\n");
+
 export async function fetchCalendar(url) {
   const res = await fetch(url, { headers: { accept: "text/calendar" }, cf: { cacheTtl: 0 } });
   if (!res.ok) return { ok: false, status: res.status };
   const text = await res.text();
   if (!/BEGIN:VCALENDAR/.test(text)) return { ok: false, status: res.status };
-  return { ok: true, events: parseIcs(text), hash: await hashOf(text) };
+  const events = parseIcs(text);
+  return { ok: true, events, hash: await hashOf(fingerprint(events)) };
 }
 
 /* сверяем с тем, что уже знаем: что появилось и что перенесли */
 export async function syncUser(env, user) {
   if (!user.cal_url) return null;
   const got = await fetchCalendar(user.cal_url);
-  await env.DB.prepare("UPDATE users SET cal_checked = ? WHERE chat_id = ?").bind(Date.now(), user.chat_id).run();
+  /* отметку о проверке обновляем раз в десять минут: она нужна только для порядка обхода */
+  if (!user.cal_checked || Date.now() - user.cal_checked > 10 * 60000)
+    await env.DB.prepare("UPDATE users SET cal_checked = ? WHERE chat_id = ?").bind(Date.now(), user.chat_id).run();
   if (!got.ok) return { ok: false, status: got.status };
   if (got.hash === user.cal_hash) return { ok: true, same: true, added: [], moved: [] };
 
-  const rows = (await env.DB.prepare("SELECT uid, due FROM deadlines WHERE chat_id = ?").bind(user.chat_id).all()).results;
-  const known = new Map(rows.map(r => [r.uid, r.due]));
+  const rows = (await env.DB.prepare("SELECT uid, due, title, descr FROM deadlines WHERE chat_id = ?")
+    .bind(user.chat_id).all()).results;
+  const known = new Map(rows.map(r => [r.uid, r]));
   const fresh = got.events.filter(isDeadline);
   const added = [], moved = [], writes = [];
 
   for (const e of fresh) {
     const was = known.get(e.uid);
-    if (was === undefined) added.push(e);
-    else if (Math.abs(was - e.due) > 60000) moved.push({ ...e, was });
+    const descr = (e.descr || "").slice(0, 3000);
+    if (!was) added.push(e);
+    else if (Math.abs(was.due - e.due) > 60000) moved.push({ ...e, was: was.due });
     known.delete(e.uid);
+    /* пишем только то, что правда изменилось — иначе база переписывалась бы каждую минуту */
+    if (was && was.due === e.due && was.title === e.title && (was.descr || "") === descr) continue;
     writes.push(env.DB.prepare(
       "INSERT INTO deadlines (chat_id, uid, title, subject, due, descr, modified) VALUES (?, ?, ?, ?, ?, ?, ?) " +
       "ON CONFLICT(chat_id, uid) DO UPDATE SET title = excluded.title, subject = excluded.subject, " +
       "due = excluded.due, descr = excluded.descr, modified = excluded.modified")
-      .bind(user.chat_id, e.uid, e.title, e.subject || "", e.due, (e.descr || "").slice(0, 3000), e.modified || ""));
+      .bind(user.chat_id, e.uid, e.title, e.subject || "", e.due, descr, e.modified || ""));
   }
   for (const uid of known.keys())                        // задание убрали из Moodle
     writes.push(env.DB.prepare("DELETE FROM deadlines WHERE chat_id = ? AND uid = ?").bind(user.chat_id, uid));

@@ -23,10 +23,14 @@ async function kickTicker(env) {
   return (await stub.fetch("https://ticker/kick")).json();
 }
 /* если будильник давно не срабатывал — завести заново */
-async function healTicker(env) {
+async function tickAge(env) {
   const last = await db.getMeta(env, "tick_last");
   const at = last ? Date.parse(last.split(" ")[0]) : 0;
-  if (!at || Date.now() - at > 3 * 60000) await kickTicker(env);
+  return at ? Date.now() - at : Infinity;
+}
+/* будильник молчит дольше восьми минут (метка пишется раз в пять) — заводим заново */
+async function healTicker(env) {
+  if (await tickAge(env) > 8 * 60000) await kickTicker(env);
 }
 
 export default {
@@ -79,11 +83,13 @@ export default {
     return env.ASSETS.fetch(request);
   },
 
-  /* запасной путь, если cron Cloudflare всё-таки заработает: дубли исключены отметками в базе */
+  /* Cron — только страховка: всю работу делает будильник Durable Object раз в минуту.
+     Делать то же самое дважды значит впустую тратить запросы к базе. */
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(Promise.all([
-      runCron(env, "cron").catch(e => console.log("cron failed", e && e.stack || e)),
-      kickTicker(env).catch(() => {}),
-    ]));
+    ctx.waitUntil((async () => {
+      await kickTicker(env).catch(() => {});
+      if (await tickAge(env) > 8 * 60000)
+        await runCron(env, "cron").catch(e => console.log("cron failed", e && e.stack || e));
+    })());
   },
 };

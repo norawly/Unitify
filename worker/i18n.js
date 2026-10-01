@@ -217,7 +217,7 @@ export const placeName = (name, lang) => (lang === "en" && PLACE_EN[name]) || na
 /* «2 ч 30 мин» / «2 h 30 min» */
 export function durIn(m, lang) {
   const L = t(lang), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), r = m % 60;
-  if (d) return `${d} ${L.d} ${h} ${L.h}`;
+  if (d) return `${d} ${L.d}` + (h ? ` ${h} ${L.h}` : "");
   if (h) return `${h} ${L.h}` + (r ? ` ${r} ${L.min}` : "");
   return `${r} ${L.min}`;
 }
