@@ -1,6 +1,5 @@
-/* Обработка сообщений и кнопок бота.
-   Главное правило: в чате живут только два последних сообщения бота — новое приходит,
-   старая карточка пары переписывается на актуальную, всё лишнее удаляется (worker/msgs.js). */
+/* Обработка сообщений и кнопок бота. Лимиты сообщений раздельны по видам
+   (worker/msgs.js): дедлайны не вытесняют карточки пар. */
 import * as T from "./sched.js";
 import * as X from "./text.js";
 import * as db from "./db.js";
@@ -50,7 +49,6 @@ export const menuKeyboard = (e, user) => {
     keyboard: [
       [{ text: L.menu_next }, { text: L.menu_today }],
       [{ text: L.menu_deadlines }, { text: L.menu_settings }],
-      [{ text: L.menu_site, web_app: { url: site(e, user.person) } }],
     ],
     resize_keyboard: true,
     is_persistent: true,
@@ -296,6 +294,22 @@ async function onCallback(c, cb) {
   else if (kind === "w") await showWeek(c, a, true);
   else if (kind === "s") toast = await settings(c, a, true);
   else if (kind === "dl") await deadlines(c, a, true);
+  else if (kind === "c" && /^\d{4}-\d{2}-\d{2}$/.test(a) && /^\d+$/.test(b)) {
+    const S = await loadSchedule(c.env, c.user.person);
+    const g = S && T.dayBlocks(S, a).find(x => x.rs === +b);
+    if (g) await sendClassCard(c.env, c.chatId, c.user, g, a, X.stateOf(g, a, c.now));
+  }
+  else if ((kind === "hd" || kind === "hu") && /^\d+$/.test(a)) {
+    const d = await moodle.deadlineById(c.env, c.chatId, +a);
+    if (d) {
+      await moodle.setDone(c.env, c.chatId, d.id, kind === "hd");
+      toast = dict(c.lang)[kind === "hd" ? "done_saved" : "done_restored"];
+      if (kind === "hd" && c.mid) await tg(c.env, "editMessageReplyMarkup", {
+        chat_id: c.chatId, message_id: c.mid, reply_markup: { inline_keyboard: [] },
+      });
+      if (kind === "hu") await deadlines(c, null, true);
+    }
+  }
   else if (kind === "a") toast = await admin(c, a, b);
   await tg(c.env, "answerCallbackQuery", { callback_query_id: cb.id, ...(toast ? { text: toast } : {}) });
   /* даже при заходе в настройки прошлая карточка пары пересчитывается по времени */
@@ -307,7 +321,7 @@ export async function nextCard(e, chatId, user, now, force) {
   const L = dict(langOf(user));
   const S = await loadSchedule(e, user.person);
   if (!S) return send(e, chatId, L.ask_barcode);
-  const n = T.nextClass(S, now);
+  const n = T.nextClass(S, now, false);
   if (!n) return send(e, chatId, L.no_more);
   const state = force || X.stateOf(n.g, n.iso, now);
   return sendClassCard(e, chatId, user, n.g, n.iso, state, [[{ text: L.btn_refresh, callback_data: "n" },
@@ -339,9 +353,12 @@ async function todayCard(c, iso) {
     ? (now.live ? `🟢 ${L.live_now(durIn(now.left, c.lang))}` : `⏭ ${L.next_in(durIn(now.wait, c.lang))} · ${T.hhmm(now.g.rs)}`)
     : "";
   const caption = `📅 <b>${day}, ${X.fmtDate(iso, c.lang)}</b>` + (hint ? `\n${hint}` : "");
-  const markup = { inline_keyboard: [[{ text: L.btn_back, callback_data: "s:open" }]] };
-  if (!photo) return show(c, X.dayText(S, iso, c.now, c.lang), markup, false);
-  return post(c.env, c.chatId, { photo, text: caption, markup });
+  const markup = { inline_keyboard: list.map(g => [{
+    text: `${T.hhmm(g.rs)}  ${subjectName(g.it.subject, c.lang).slice(0, 28)}`,
+    callback_data: `c:${iso}:${g.rs}`,
+  }]) };
+  if (!photo) return show(c, X.dayText(S, iso, c.now, c.lang), markup, false, "day");
+  return post(c.env, c.chatId, { kind: "day", photo, text: caption, markup });
 }
 
 async function showDay(c, iso, edit) {
@@ -405,10 +422,15 @@ async function saveCalendar(c, url) {
 
 async function deadlines(c, _which, edit) {
   const L = dict(c.lang), off = +(c.env.TZ_OFFSET_MIN || 300);
-  if (!c.user.cal_url) return show(c, L.cal_how, { inline_keyboard: [[{ text: L.btn_back, callback_data: "s:open" }]] }, edit);
-  const list = await moodle.upcoming(c.env, c.chatId, Date.now(), 20);
+  if (!c.user.cal_url) return show(c, L.cal_how, null, edit);
+  const S = await loadSchedule(c.env, c.user.person);
+  const list = await moodle.visibleUpcoming(c.env, c.chatId, S, Date.now(), 20, off);
+  const undo = list.filter(d => d.done_at).slice(0, 8).map(d => [{
+    text: `${L.btn_undo} · ${String(d.title).replace(/ is due$/i, "").slice(0, 24)}`,
+    callback_data: `hu:${d.id}`,
+  }]);
   return show(c, X.deadlinesText(list, Date.now(), c.lang, off),
-    { inline_keyboard: [[{ text: L.btn_back, callback_data: "s:open" }]] }, edit);
+    undo.length ? { inline_keyboard: undo } : null, edit);
 }
 
 /* ---------- настройки ---------- */
@@ -417,22 +439,21 @@ async function settings(c, what, edit) {
   const L0 = dict(c.lang);
   if (what === "today") { await todayCard(c); return ""; }
   if (what === "cal") {
-    if (!u.cal_url) { await show(c, L0.cal_how, { inline_keyboard: [[{ text: L0.btn_back, callback_data: "s:open" }]] }, edit); return ""; }
+    if (!u.cal_url) { await show(c, L0.cal_how, null, edit); return ""; }
     await show(c, `${L0.s_moodle}: <b>${L0.s_moodle_on}</b>\n\n${L0.cal_note}`, { inline_keyboard: [
       [{ text: L0.menu_deadlines, callback_data: "dl" }],
-      [{ text: L0.btn_cal_off, callback_data: "s:caloff" }],
-      [{ text: L0.btn_back, callback_data: "s:open" }]] }, edit);
+      [{ text: L0.btn_cal_off, callback_data: "s:caloff" }]] }, edit);
     return "";
   }
   if (what === "caloff") {
     await db.updateUser(c.env, c.chatId, { cal_url: null, cal_hash: null });
     await c.env.DB.prepare("DELETE FROM deadlines WHERE chat_id = ?").bind(c.chatId).run();
     u.cal_url = null;
-    await show(c, L0.cal_off, { inline_keyboard: [[{ text: L0.btn_back, callback_data: "s:open" }]] }, edit);
+    await show(c, L0.cal_off, null, edit);
     return "";
   }
   if (what === "person") {
-    await show(c, `🎫 ${L0.ask_barcode}`, { inline_keyboard: [[{ text: L0.btn_back, callback_data: "s:open" }]] }, edit);
+    await show(c, `🎫 ${L0.ask_barcode}`, null, edit);
     return "";
   }
 

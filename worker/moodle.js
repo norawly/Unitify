@@ -103,8 +103,32 @@ export async function syncUser(env, user) {
 }
 
 export const upcoming = (env, chatId, from, limit = 10) =>
-  env.DB.prepare("SELECT * FROM deadlines WHERE chat_id = ? AND due >= ? ORDER BY due LIMIT ?")
+  env.DB.prepare("SELECT rowid AS id, * FROM deadlines WHERE chat_id = ? AND due >= ? ORDER BY due LIMIT ?")
     .bind(chatId, from, limit).all().then(r => r.results);
 
+/* Во время экзаменов и каникул не показываем дедлайны за пределами учебного
+   триместра. После каникул фильтр снимается: сохранённый календарь не теряется. */
+export function visibleDeadline(d, schedule, nowMs, off = 300) {
+  const term = schedule && schedule.term;
+  const cutoff = term && term.exams && term.exams[0];
+  const resume = term && term.vacation && term.vacation[1];
+  if (!cutoff || !resume) return true;
+  const localIso = ms => new Date(ms + off * 60000).toISOString().slice(0, 10);
+  return localIso(nowMs) > resume || localIso(d.due) <= cutoff;
+}
+
+export async function visibleUpcoming(env, chatId, schedule, from, limit = 20, off = 300) {
+  const all = await upcoming(env, chatId, from, 200);
+  return all.filter(d => visibleDeadline(d, schedule, from, off)).slice(0, limit);
+}
+
+export const deadlineById = (env, chatId, id) =>
+  env.DB.prepare("SELECT rowid AS id, * FROM deadlines WHERE chat_id = ? AND rowid = ?")
+    .bind(chatId, id).first();
+
+export const setDone = (env, chatId, id, done) =>
+  env.DB.prepare("UPDATE deadlines SET done_at = ? WHERE chat_id = ? AND rowid = ?")
+    .bind(done ? Date.now() : null, chatId, id).run();
+
 export const oneDeadline = (env, chatId, uid) =>
-  env.DB.prepare("SELECT * FROM deadlines WHERE chat_id = ? AND uid = ?").bind(chatId, uid).first();
+  env.DB.prepare("SELECT rowid AS id, * FROM deadlines WHERE chat_id = ? AND uid = ?").bind(chatId, uid).first();

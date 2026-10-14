@@ -140,7 +140,7 @@ export function deadlinesText(list, now, lang, off = 300, head = null) {
       : iso === T.isoAdd(today, 1) ? L.tomorrow
       : `${at.getUTCDate()} ${L.monthsShort[at.getUTCMonth()]}`;
     const hhmm = `${String(at.getUTCHours()).padStart(2, "0")}:${String(at.getUTCMinutes()).padStart(2, "0")}`;
-    return `⏳ <b>${dueIn(d.due, now, lang)}</b> · ${day}, ${hhmm}\n` +
+    return `${d.done_at ? "✅" : "⏳"} <b>${d.done_at ? (lang === "en" ? "marked done" : "отмечено сделанным") : dueIn(d.due, now, lang)}</b> · ${day}, ${hhmm}\n` +
            `${esc(String(d.title).replace(/ is due$/i, ""))} · <i>${esc(d.subject || "")}</i>`;
   }).join("\n\n");
   return `${title}\n\n${body}`;

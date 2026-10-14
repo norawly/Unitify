@@ -50,18 +50,21 @@ const DICT = {
     locked: "🔒 <b>Это расписание закрыто.</b>\n\nОно личное и привязано к другому аккаунту.",
     welcome: lead =>
       `🔔 Буду напоминать о каждой паре <b>за ${lead} мин</b>: предмет, время и кабинет на карте.\n\n` +
-      "🌐 Расписание целиком — кнопка «Расписание». Остальное — в ⚙️ Настройках.\n" +
+      "🌐 Расписание целиком — кнопка приложения в меню Telegram. Остальное — в ⚙️ Настройках.\n" +
       "📍 Напиши номер кабинета, например <code>2.232P</code>, — покажу, где он.",
 
     menu_next: "⏭ Следующая пара", menu_settings: "⚙️ Настройки", menu_site: "🌐 Расписание",
     btn_map: "🗺 Открыть на карте", btn_lms: "💻 Открыть LMS", btn_refresh: "🔄 Обновить",
-    btn_day: "📅 Весь день", btn_back: "◀️ Назад", btn_task: "📄 Показать задание",
+    btn_day: "📅 Весь день", btn_task: "📄 Показать задание",
+    btn_done: "✅ Сделал", btn_undo: "↩️ Не сделано",
+    done_saved: "Отмечено как сделанное. Напоминаний больше не будет.",
+    done_restored: "Отметку снял. Напоминания снова включены.",
 
     in_time: t => `Пара через ${t}`,
     live_now: t => `Идёт сейчас · ещё ${t}`,
     next_in: t => `Следующая пара · через ${t}`,
     passed: "Пара прошла",
-    no_more: "🏁 Пар больше нет — триместр позади",
+    no_more: "🏁 Следующих пар пока нет",
     no_classes: "😌 Пар нет",
 
     settings: "⚙️ <b>Настройки</b>",
@@ -141,18 +144,21 @@ const DICT = {
     locked: "🔒 <b>This timetable is private.</b>\n\nIt is locked to its owner's Telegram account.",
     welcome: lead =>
       `🔔 I'll remind you <b>${lead} min</b> before every class: subject, time and the room on the map.\n\n` +
-      "🌐 Full timetable — the «Timetable» button. Everything else is in ⚙️ Settings.\n" +
+      "🌐 Full timetable — the app button in Telegram's menu. Everything else is in ⚙️ Settings.\n" +
       "📍 Send a room number, e.g. <code>2.232P</code>, and I'll show where it is.",
 
     menu_next: "⏭ Next class", menu_settings: "⚙️ Settings", menu_site: "🌐 Timetable",
     btn_map: "🗺 Show on map", btn_lms: "💻 Open LMS", btn_refresh: "🔄 Refresh",
-    btn_day: "📅 Whole day", btn_back: "◀️ Back", btn_task: "📄 Show task",
+    btn_day: "📅 Whole day", btn_task: "📄 Show task",
+    btn_done: "✅ Done", btn_undo: "↩️ Not done",
+    done_saved: "Marked as done. No more reminders for this task.",
+    done_restored: "Mark removed. Reminders are on again.",
 
     in_time: t => `Class in ${t}`,
     live_now: t => `In progress · ${t} left`,
     next_in: t => `Next class · in ${t}`,
     passed: "Class finished",
-    no_more: "🏁 No more classes — the term is over",
+    no_more: "🏁 No upcoming classes for now",
     no_classes: "😌 No classes",
 
     settings: "⚙️ <b>Settings</b>",

@@ -9,7 +9,7 @@ import { loadSchedule, loader, sendClassCard, post, dayPhoto, menuKeyboard } fro
 import { t as dict, durIn, SUBJECT_EN } from "./i18n.js";
 
 const BUDGET = 40;            // бесплатный план — до 50 запросов наружу за запуск
-const DUE_LEADS = [24 * 60, 2 * 60];   // о дедлайне напоминаем за сутки и за два часа
+const DUE_LEADS = [12 * 60, 6 * 60, 3 * 60, 2 * 60, 60, 30];
 
 export async function runCron(env, source = "cron") {
   if (!env.TELEGRAM_TOKEN || !env.DB) return;
@@ -98,8 +98,8 @@ async function morning(env, u, S, today, now) {
   }
 
   if (!u.cal_url) return;
-  const soon = (await moodle.upcoming(env, u.chat_id, Date.now(), 20))
-    .filter(d => d.due < Date.now() + 2 * 86400000);
+  const soon = (await moodle.visibleUpcoming(env, u.chat_id, S, Date.now(), 20, off))
+    .filter(d => !d.done_at && d.due < Date.now() + 2 * 86400000);
   await post(env, u.chat_id, { kind: "due", markup: menuKeyboard(env, u), text: soon.length
     ? X.deadlinesText(soon, Date.now(), lang, off, L.due_soon_head)
     : L.due_none_soon });
@@ -110,7 +110,8 @@ async function evening(env, u) {
   const lang = u.lang === "en" ? "en" : "ru", L = dict(lang), off = +(env.TZ_OFFSET_MIN || 300);
   const markup = menuKeyboard(env, u);
   if (!u.cal_url) return post(env, u.chat_id, { kind: "due", text: L.evening, markup });
-  const list = await moodle.upcoming(env, u.chat_id, Date.now(), 20);
+  const S = await loadSchedule(env, u.person);
+  const list = await moodle.visibleUpcoming(env, u.chat_id, S, Date.now(), 20, off);
   return post(env, u.chat_id, { kind: "due", markup,
     text: `${L.evening}\n\n${X.deadlinesText(list, Date.now(), lang, off)}` });
 }
@@ -121,34 +122,40 @@ async function checkCalendar(env, u, now) {
   const initial = !u.cal_hash;                     // первое подключение: список и так покажем, молчим
   const r = await moodle.syncUser(env, u);
   if (!r || !r.ok) return;
+  const S = await loadSchedule(env, u.person);
 
   if (!initial) {
-    const soon = list => list.filter(d => d.due > Date.now()).sort((a, b) => a.due - b.due).slice(0, 2);
-    for (const d of soon(r.added || []))
-      if (await db.markSent(env, u.chat_id, `dl:new:${d.uid}:${d.due}`))
-        await post(env, u.chat_id, { kind: "deadline", text: deadlineText(L.new_deadline, d, lang, off) });
-    for (const d of soon(r.moved || []))
-      if (await db.markSent(env, u.chat_id, `dl:mv:${d.uid}:${d.due}`))
-        await post(env, u.chat_id, { kind: "deadline", text: deadlineText(L.moved_deadline, d, lang, off) });
+    const soon = list => list.filter(d => d.due > Date.now() && moodle.visibleDeadline(d, S, Date.now(), off))
+      .sort((a, b) => a.due - b.due).slice(0, 2);
+    for (const [events, key, head] of [[r.added || [], "new", L.new_deadline], [r.moved || [], "mv", L.moved_deadline]])
+      for (const event of soon(events)) {
+        const d = await moodle.oneDeadline(env, u.chat_id, event.uid);
+        if (d && !d.done_at && await db.markSent(env, u.chat_id, `dl:${key}:${d.uid}:${d.due}`))
+          await post(env, u.chat_id, { kind: "deadline", text: deadlineText(head, d, lang, off),
+            markup: doneMarkup(d, L) });
+      }
   }
 
   /* расхождение с нашим расписанием — не чаще раза в сутки */
   if (r.events && await db.markSent(env, u.chat_id, `${now.iso}:cmp`)) {
-    const S = await loadSchedule(env, u.person);
     const diff = S ? compare(S, r.events, now, off, lang) : [];
     if (diff.length)
       await post(env, u.chat_id, { text: `${L.moodle_diff}\n\n${diff.slice(0, 5).join("\n")}\n\n<i>${L.moodle_diff_note}</i>` });
   }
 
-  /* за сутки и за два часа до сдачи */
-  for (const d of await moodle.upcoming(env, u.chat_id, Date.now(), 10)) {
+  /* за 12/6/3/2/1 час и 30 минут до сдачи; ручная отметка выключает напоминания */
+  for (const d of await moodle.visibleUpcoming(env, u.chat_id, S, Date.now(), 30, off)) {
+    if (d.done_at) continue;
     const left = Math.round((d.due - Date.now()) / 60000);
     for (const lead of DUE_LEADS)
       if (left > lead - 5 && left <= lead && await db.markSent(env, u.chat_id, `dl:${lead}:${d.uid}:${d.due}`))
         await post(env, u.chat_id, { kind: "deadline",
-          text: deadlineText(L.due_soon(durIn(left, lang)), d, lang, off) });
+          text: deadlineText(L.due_soon(durIn(left, lang)), d, lang, off),
+          markup: doneMarkup(d, L) });
   }
 }
+
+const doneMarkup = (d, L) => ({ inline_keyboard: [[{ text: L.btn_done, callback_data: `hd:${d.id}` }]] });
 
 function deadlineText(head, d, lang, off) {
   const at = new Date(d.due + off * 60000), L = dict(lang);

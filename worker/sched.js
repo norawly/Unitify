@@ -75,13 +75,13 @@ export function dayBlocks(S, iso) {
   return blocks(S, k);
 }
 
-/* ближайшая пара: идущая сейчас или следующая (до двух недель вперёд) */
-export function nextClass(S, now) {
+/* ближайшая пара: по умолчанию идущая сейчас; includeLive=false — только будущая */
+export function nextClass(S, now, includeLive = true) {
   for (let i = 0; i < 15; i++) {
     const iso = isoAdd(now.iso, i);
     for (const g of dayBlocks(S, iso)) {
       if (i === 0) {
-        if (now.min >= g.rs && now.min < g.re) return { g, iso, live: true, left: g.re - now.min };
+        if (includeLive && now.min >= g.rs && now.min < g.re) return { g, iso, live: true, left: g.re - now.min };
         if (g.rs > now.min) return { g, iso, live: false, wait: g.rs - now.min };
       } else return { g, iso, live: false, wait: i * 1440 - now.min + g.rs };
     }
