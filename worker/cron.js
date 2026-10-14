@@ -25,6 +25,18 @@ export async function runCron(env, source = "cron") {
 
   for (const u of await db.activeUsers(env)) {
     if (budget <= 0) break;
+    // У Telegram старая reply-клавиатура не меняется от одной правки кода.
+    // Один раз отправляем новую (без Timetable) и убираем прежнее меню.
+    if (await db.markSent(env, u.chat_id, "reply-keyboard-four-actions-v1")) {
+      const lang = u.lang === "en" ? "en" : "ru";
+      const r = await post(env, u.chat_id, { kind: "menu",
+        text: lang === "en" ? "Menu updated." : "Кнопки меню обновлены.",
+        markup: menuKeyboard(env, u) });
+      if (!r.ok) await env.DB.prepare("DELETE FROM sent WHERE chat_id = ? AND key = ?")
+        .bind(u.chat_id, "reply-keyboard-four-actions-v1").run();
+      else await M.clearClassButtons(env, u.chat_id);
+      budget -= 2;
+    }
     const S = await loadSchedule(env, u.person);
     const today = S ? T.dayBlocks(S, now.iso) : [];
     const on = u.lead_min > 0;                       // напоминания включены

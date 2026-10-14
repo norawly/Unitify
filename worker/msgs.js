@@ -33,14 +33,18 @@ export async function dropKind(e, chatId, kind) {
 /* ночная уборка: в чате не остаётся ничего */
 export async function wipe(e, chatId) {
   const list = (await e.DB.prepare("SELECT message_id FROM msgs WHERE chat_id = ?").bind(chatId).all()).results;
-  for (const row of list) await tg(e, "deleteMessage", { chat_id: chatId, message_id: row.message_id }).catch(() => {});
-  await e.DB.prepare("DELETE FROM msgs WHERE chat_id = ?").bind(chatId).run();
-  return list.length;
+  let removed = 0;
+  for (const row of list) if (await drop(e, chatId, row.message_id).catch(() => false)) removed++;
+  return removed;
 }
 
 export async function drop(e, chatId, id) {
-  await tg(e, "deleteMessage", { chat_id: chatId, message_id: id });
+  const r = await tg(e, "deleteMessage", { chat_id: chatId, message_id: id });
+  // Telegram может отказать в удалении (в частности, если сообщению >48 часов).
+  // Не теряем ID: иначе бот ошибочно считает чат пустым и больше не может повторить уборку.
+  if (!r.ok && !/message to delete not found/i.test(r.description || "")) return false;
   await forget(e, chatId, id);
+  return true;
 }
 
 /* карточку пары переписываем под текущее время: ещё будет → идёт → прошла */
@@ -71,6 +75,14 @@ async function prune(e, chatId, kind) {
 export async function tidy(e, chatId, load) {
   for (const row of await rows(e, chatId, "class")) await refresh(e, chatId, row, load).catch(() => {});
   await prune(e, chatId, "class");
+}
+
+/* убрать старые inline-кнопки, оставшиеся под уже отправленными карточками */
+export async function clearClassButtons(e, chatId) {
+  for (const row of (await rows(e, chatId, "class")).slice(0, 2))
+    await tg(e, "editMessageReplyMarkup", {
+      chat_id: chatId, message_id: row.message_id, reply_markup: { inline_keyboard: [] },
+    });
 }
 
 /* отправить и прибрать за собой — только среди сообщений того же вида */

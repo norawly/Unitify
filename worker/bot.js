@@ -55,22 +55,14 @@ export const menuKeyboard = (e, user) => {
   };
 };
 
-function classButtons(e, user, it) {
-  const L = dict(langOf(user));
-  if (it.online) return [{ text: L.btn_lms, url: "https://lms.astanait.edu.kz" }];
-  if (T.bldg(it) || !/^\d/.test(T.roomShort(it.room))) return [];
-  return [{ text: L.btn_map, web_app: { url: site(e, user.person, "?room=" + encodeURIComponent(T.roomShort(it.room))) } }];
-}
-
 /* карточка пары: картинка карты, сколько осталось, время, предмет и кабинет */
-export async function sendClassCard(e, chatId, user, g, iso, state, extraRows = []) {
+export async function sendClassCard(e, chatId, user, g, iso, state) {
   const it = g.it, lang = langOf(user);
   const maps = await loadRoomMaps(e);
   const info = (!it.online && !T.bldg(it)) ? (maps.rooms || {})[T.mapKey(it.room)] : null;
   const text = X.classCard(g, info, state, lang);
-  const btn = classButtons(e, user, it);
-  const rows = [...(btn.length ? [btn] : []), ...extraRows];
-  const markup = rows.length ? { inline_keyboard: rows } : undefined;
+  // Карточка пары не является меню: фото раскрывается нажатием, кнопки под ней не нужны.
+  const markup = undefined;
   const ref = { slug: user.person, iso, rs: g.rs, state: state.kind, lang, info, photo: !!info };
 
   /* та же пара уже висит последним сообщением — обновляем её, а не плодим дубли */
@@ -324,8 +316,7 @@ export async function nextCard(e, chatId, user, now, force) {
   const n = T.nextClass(S, now, false);
   if (!n) return send(e, chatId, L.no_more);
   const state = force || X.stateOf(n.g, n.iso, now);
-  return sendClassCard(e, chatId, user, n.g, n.iso, state, [[{ text: L.btn_refresh, callback_data: "n" },
-                                                             { text: L.btn_day, callback_data: "s:today" }]]);
+  return sendClassCard(e, chatId, user, n.g, n.iso, state);
 }
 
 const preview = c => nextCard(c.env, c.chatId, c.user, c.now,
