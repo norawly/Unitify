@@ -6,6 +6,7 @@ import * as db from "./db.js";
 import * as M from "./msgs.js";
 import * as moodle from "./moodle.js";
 import { tg } from "./tg.js";
+import { isPrivateUpdate } from "./access.js";
 import { t as dict, subject as subjectName, durIn } from "./i18n.js";
 
 /* за сколько напоминать, решает расписание (worker/sched.js: leadOf) — в настройках только вкл/выкл */
@@ -94,6 +95,7 @@ export async function allowed(e, slug, chatId) {
 
 /* ---------- вход ---------- */
 export async function handleUpdate(e, update) {
+  if (!isPrivateUpdate(e, update)) return;
   const msg = update.message, cb = update.callback_query;
   const chat = msg ? msg.chat : cb && cb.message && cb.message.chat;
   const from = msg ? msg.from : cb && cb.from;

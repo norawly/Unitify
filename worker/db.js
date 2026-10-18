@@ -1,4 +1,5 @@
 /* D1: пользователи, отправленные напоминания, служебные ключи */
+import { privateChatIds } from "./access.js";
 
 export const getUser = (env, id) =>
   env.DB.prepare("SELECT * FROM users WHERE chat_id = ?").bind(id).first();
@@ -32,7 +33,10 @@ export async function admins(env) {
   return (await env.DB.prepare("SELECT chat_id FROM users WHERE status = 'admin'").all()).results;
 }
 export async function activeUsers(env) {
-  return (await env.DB.prepare("SELECT * FROM users WHERE status IN ('admin', 'approved')").all()).results;
+  const ids = privateChatIds(env);
+  if (ids.length !== 2) return [];
+  return (await env.DB.prepare("SELECT * FROM users WHERE status IN ('admin', 'approved') AND chat_id IN (?, ?)")
+    .bind(...ids).all()).results;
 }
 export async function allUsers(env) {
   return (await env.DB.prepare("SELECT * FROM users ORDER BY created_at DESC LIMIT 50").all()).results;
@@ -70,9 +74,12 @@ export async function guestQuiet(env, id) {
 export const guestClear = (env, id) => env.DB.prepare("DELETE FROM guests WHERE chat_id = ?").bind(id).run();
 
 /* у кого подключён календарь Moodle и кого пора проверить */
-export const calendarUsers = env =>
-  env.DB.prepare("SELECT * FROM users WHERE cal_url IS NOT NULL AND status IN ('admin','approved') " +
-                 "ORDER BY cal_checked LIMIT 10").all().then(r => r.results);
+export async function calendarUsers(env) {
+  const ids = privateChatIds(env);
+  if (ids.length !== 2) return [];
+  return (await env.DB.prepare("SELECT * FROM users WHERE cal_url IS NOT NULL AND status IN ('admin','approved') " +
+    "AND chat_id IN (?, ?) ORDER BY cal_checked LIMIT 2").bind(...ids).all()).results;
+}
 
 /* личные расписания: первый привязавшийся становится владельцем, остальным вход закрыт */
 export const ownerOf = (env, person) =>

@@ -4,6 +4,7 @@ import { handleUpdate } from "./bot.js";
 import { runCron, ensureWebhook } from "./cron.js";
 import { tg, webhookSecret } from "./tg.js";
 import * as db from "./db.js";
+import { isPrivateUpdate, privateChatIds } from "./access.js";
 
 export { Ticker } from "./ticker.js";
 
@@ -55,6 +56,8 @@ export default {
       const rows = (await env.DB.prepare("SELECT status, COUNT(*) AS n FROM users GROUP BY status").all()).results;
       return json({
         ok: !!info.ok,
+        access: "private",
+        allowed_accounts: privateChatIds(env).length,
         webhook: w.url || null,
         pending_updates: w.pending_update_count,
         last_error: w.last_error_message || null,
@@ -73,7 +76,7 @@ export default {
         return new Response("forbidden", { status: 403 });
 
       const update = await request.json().catch(() => null);
-      if (update) ctx.waitUntil(Promise.all([
+      if (update && isPrivateUpdate(env, update)) ctx.waitUntil(Promise.all([
         handleUpdate(env, update).catch(e => console.log("update failed", e && e.stack || e)),
         healTicker(env).catch(e => console.log("ticker heal failed", e && e.stack || e)),
       ]));

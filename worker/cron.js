@@ -7,12 +7,14 @@ import * as moodle from "./moodle.js";
 import { tg, webhookSecret } from "./tg.js";
 import { loadSchedule, loader, sendClassCard, post, dayPhoto, menuKeyboard } from "./bot.js";
 import { t as dict, durIn, SUBJECT_EN } from "./i18n.js";
+import { privateChatIds, retireOtherUsers } from "./access.js";
 
 const BUDGET = 40;            // бесплатный план — до 50 запросов наружу за запуск
 const DUE_LEADS = [12 * 60, 6 * 60, 3 * 60, 2 * 60, 60, 30];
 
 export async function runCron(env, source = "cron") {
-  if (!env.TELEGRAM_TOKEN || !env.DB) return;
+  if (!env.TELEGRAM_TOKEN || !env.DB || privateChatIds(env).length !== 2) return;
+  await retireOtherUsers(env);
   /* метку времени пишем раз в пять минут: на бесплатном D1 важен каждый лишний запрос на запись */
   const nowMin = Math.floor(Date.now() / 60000);
   if (nowMin % 5 === 0) await db.setMeta(env, "tick_last", `${new Date().toISOString()} ${source}`);

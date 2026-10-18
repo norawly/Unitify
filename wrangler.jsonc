@@ -38,8 +38,8 @@
   "vars": {
     "PUBLIC_URL": "https://s.zhengisbay.com",
     "TZ_OFFSET_MIN": "300",
-    "REGISTRATION": "approval",
-    "MAX_USERS": "60",
+    "REGISTRATION": "closed",
+    "MAX_USERS": "2",
     "ADMIN_CONTACT": "@nxxbruh"
   },
   "observability": { "enabled": true }
