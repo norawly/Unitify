@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Unitify Bridge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "icons": { "128": "icons/icon-192.png" },
   "description": "Read-only homework, attendance and grade sync with your Unitify Telegram bot.",
   "permissions": ["storage", "alarms"],

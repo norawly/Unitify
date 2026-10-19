@@ -2,6 +2,7 @@ import { normalizeRecord, changes } from "../extension/lib/model.mjs";
 import { privateChatIds } from "./access.js";
 import * as M from "./msgs.js";
 import { esc } from "./text.js";
+import { syncContext } from "./lms-policy.js";
 
 const hash = async text => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))].map(v => v.toString(16).padStart(2, "0")).join("");
 const random = () => [...crypto.getRandomValues(new Uint8Array(32))].map(v => v.toString(16).padStart(2, "0")).join("");
@@ -52,7 +53,7 @@ export async function handleLms(request, env) {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
   if (request.method !== "POST") return reply({ error: "Use POST" }, 405);
   const path = new URL(request.url).pathname;
-  if (!["/api/lms/pair", "/api/lms/sync", "/api/lms/revoke"].includes(path)) return reply({ error: "Not found" }, 404);
+  if (!["/api/lms/pair", "/api/lms/sync", "/api/lms/revoke", "/api/lms/context"].includes(path)) return reply({ error: "Not found" }, 404);
   if (env.RL && !(await env.RL.limit({ key: "lms-ip:" + (request.headers.get("cf-connecting-ip") || "unknown") })).success)
     return reply({ error: "Лимит — 7 запросов в минуту. Повторите через минуту." }, 429);
   if (privateChatIds(env).length !== 2) return reply({ error: "Access unavailable" }, 503);
@@ -70,20 +71,21 @@ export async function handleLms(request, env) {
         env.DB.prepare("DELETE FROM lms_pair_codes WHERE code_hash=?").bind(codeHash),
       ]);
       if (!result[0].meta.changes) return reply({ error: "Код неверен или истёк. Получите новый: /extension." }, 403);
-      const paired = await env.DB.prepare("SELECT a.account FROM lms_devices d LEFT JOIN lms_accounts a ON a.chat_id=d.chat_id WHERE d.token_hash=?").bind(tokenHash).first();
-      return reply({ ok: true, token, account: paired?.account || null });
+      const paired = await env.DB.prepare("SELECT d.chat_id,a.account FROM lms_devices d LEFT JOIN lms_accounts a ON a.chat_id=d.chat_id WHERE d.token_hash=?").bind(tokenHash).first();
+      return reply({ ok: true, token, account: paired?.account || null, syncContext: await syncContext(env, paired.chat_id) });
     }
     const token = request.headers.get("authorization")?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
     if (!token) return reply({ error: "Unauthorized" }, 401);
     const device = await env.DB.prepare("SELECT * FROM lms_devices WHERE token_hash=?").bind(await hash(token)).first();
     if (!device || !permitted(env, device.chat_id) || !await registered(env, device.chat_id)) return reply({ error: "Unauthorized" }, 401);
     if (path.endsWith("/revoke")) { await revokeDevice(env, device.chat_id); return reply({ ok: true }); }
+    if (path.endsWith("/context")) return reply({ ok: true, syncContext: await syncContext(env, device.chat_id) });
     if (device.last_sync && Date.now() - device.last_sync < 8000) return reply({ error: "Слишком частая синхронизация. Подождите 8 секунд." }, 429);
     const payload = await boundedJson(request);
     const cards = validateGradeCards(payload?.gradeCards);
     const result = await ingest(env, device, payload);
     if (cards.length) await saveGradeCards(env, device.chat_id, cards);
-    return reply({ ok: true, ...result });
+    return reply({ ok: true, ...result, syncContext: await syncContext(env, device.chat_id) });
   } catch (e) {
     // Never log request bodies, tokens or private academic snapshots.
     if (e instanceof InputError) return reply({ error: e.message }, e.status);

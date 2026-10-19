@@ -13,6 +13,11 @@ async function refresh() {
   $("#timestamps").textContent = "База в Telegram: " + time(state.cloudAt);
   $("#notice").textContent = state.cloudError || "";
   $("#notice").hidden = !state.cloudError;
+  const latest = state.syncContext?.version;
+  const version = chrome.runtime.getManifest().version;
+  const newer = latest && /^\d+\.\d+\.\d+$/.test(latest) && latest.split(".").reduce((result, n, i) => result || Math.sign(+n - +(version.split(".")[i] || 0)), 0) > 0;
+  $("#update").hidden = !newer;
+  $("#update").textContent = "Скачать обновление " + (newer ? latest : "");
 }
 async function act(message) {
   try { const result = await api(message); if (result?.error) throw Error(result.error); await refresh(); }
@@ -20,6 +25,7 @@ async function act(message) {
 }
 $("#pair").onsubmit = e => { e.preventDefault(); void act({ type: "PAIR", code: $("#code").value }); };
 $("#sync").onclick = () => act({ type: "SYNC" });
+$("#update").onclick = () => chrome.tabs.create({ url: "https://s.zhengisbay.com/downloads/unitify-moodle-reader.zip?v=" + encodeURIComponent(state.syncContext.version) });
 $("#enabled").onchange = () => act({ type: "PAUSE", paused: !$("#enabled").checked });
 $("#unpair").onclick = () => act({ type: "UNPAIR" });
 $("#clear").onclick = () => { if (confirm("Очистить локальную копию? База бота сохранится.")) void act({ type: "CLEAR" }); };

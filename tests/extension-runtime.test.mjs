@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { parseHTML } from "linkedom";
 import { VERSION, normalizeRecord, changes } from "../extension/lib/model.mjs";
+import { RELEASE, nextAllowed, makePlan, policyOf, assignmentNeeded, localClock } from "../extension/lib/sync-policy.mjs";
 
 const source = name => readFileSync(new URL("../extension/" + name, import.meta.url), "utf8");
 const ID = "a".repeat(32), LMS = "https://lms.astanait.edu.kz";
@@ -42,18 +43,18 @@ test("content scanner reads arbitrary course names with GET and no session expor
   assert.equal(records.find(r => r.kind === "assignment").status, "submitted");
   assert.ok(calls.every(c => c.options.method === "GET" && c.options.credentials === "same-origin"));
   assert.ok(calls.every(c => !c.path.includes("action=") && !c.options.body));
-  assert.ok(peak > 1 && peak <= 8, `parallel requests: ${peak}`);
+  assert.ok(peak > 1 && peak <= 2, `parallel requests: ${peak}`);
   assert.equal(result.catalog.courses.length, 1);
-  // Repeat: direct grade/activity reads; course discovery still checks for new tasks.
+  // A normal repeat uses cached direct links, not all the course pages again.
   calls.length = 0;
   const again = new Promise(resolve => { finish = resolve; });
   const nextContext = { ...context };
   runInNewContext(source("parser.js"), nextContext); runInNewContext(source("content.js"), nextContext);
-  receiver({ type: "SCAN", catalog: result.catalog }, {}, () => {});
+  receiver({ type: "SCAN", catalog: result.catalog, plan: { grades: true, attendance: false, discoveryBefore: Date.now() - 6 * 3600000, skipAssignments: ["123"], scopeAt: {} } }, {}, () => {});
   const second = await again;
-  assert.equal(second.groups.flatMap(g => g.records).length, 3);
-  assert.equal(calls.length, 4);
-  assert.ok(calls.every(c => !c.path.startsWith("/my/")));
+  assert.equal(second.groups.flatMap(g => g.records).length, 1);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].path, "/grade/report/user/index.php?id=42");
 });
 
 function background(seed = {}, open = []) {
@@ -64,7 +65,7 @@ function background(seed = {}, open = []) {
     tabs: { async query() { return open; }, async sendMessage(id, message) { actions.push({ id, message }); return message.type === "CHECK" ? { account: "999", unsafe: false } : { accepted: true }; }, async create() {} },
     alarms: { async create() {}, onAlarm: { addListener() {} } }, action: { onClicked: { addListener() {} } },
   };
-  runInNewContext(source("background.js").replace(/^import .*;\s*/m, ""), { chrome, VERSION, normalizeRecord, changes, URL, Date, AbortSignal, setTimeout, fetch: async () => { throw Error("Network must not be used by this test"); } });
+  runInNewContext(source("background.js").replace(/^import .*;\s*/gm, ""), { chrome, VERSION, normalizeRecord, changes, RELEASE, nextAllowed, makePlan, policyOf, assignmentNeeded, localClock, URL, Date, AbortSignal, setTimeout, fetch: async () => { throw Error("Network must not be used by this test"); } });
   const ui = { id: ID, url: `chrome-extension://${ID}/popup.html` };
   const content = { id: ID, url: LMS + "/my/", tab: { id: 7 } };
   const send = (message, sender = ui) => new Promise(resolve => handler(message, sender, resolve));
@@ -124,4 +125,45 @@ test("partial results survive a bad record and remain available before the scan 
   assert.equal(Object.keys(b.data.accounts["999"].records).length, 1);
   assert.equal(b.data.activeTab, 7); assert.equal(b.data.errors.length, 2);
   const report = await b.send({ type: "DIAGNOSTICS" }); assert.equal(report.counts.grade, 1); assert.equal(report.errors.length, 2);
+});
+
+test("a burst of tabs can start only one scan, and navigation/manual refresh cannot bypass 30 minutes", async () => {
+  const b = background({ token: "fixture" }, [{ id: 7, url: LMS + "/my/" }]);
+  await Promise.all(Array.from({ length: 15 }, (_, i) => b.send({ type: "READY", account: "999", documentKey: "doc" + i }, b.content)));
+  assert.equal(b.actions.filter(v => v.message?.type === "SCAN").length, 1);
+  // Simulate a reload destroying the collector document and completing no data.
+  b.data.activeDocument = "old";
+  const started = b.data.lastStart;
+  await b.send({ type: "READY", account: "999", documentKey: "new" }, b.content);
+  await b.send({ type: "SYNC" });
+  await b.send({ type: "PAUSE", paused: false });
+  assert.equal(b.data.lastStart, started);
+  assert.equal(b.actions.filter(v => v.message?.type === "SCAN").length, 1);
+  assert.match(b.data.status, /Следующая проверка/);
+});
+
+test("persisted cooldown survives a service worker restart and opens after 30 minutes", async () => {
+  const b = background({ token: "fixture", lastStart: Date.now() - 29 * 60000 }, [{ id: 7, url: LMS + "/my/" }]);
+  await b.send({ type: "READY", account: "999" }, b.content);
+  assert.ok(!b.actions.some(v => v.message?.type === "SCAN"));
+  b.data.lastStart = Date.now() - 31 * 60000;
+  await b.send({ type: "READY", account: "999" }, b.content);
+  assert.equal(b.actions.filter(v => v.message?.type === "SCAN").length, 1);
+});
+
+test("Moodle 429 stops the queued pages and preserves a longer Retry-After", async () => {
+  let receiver, finish, calls = 0;
+  const done = new Promise(resolve => { finish = resolve; });
+  const dashboard = '<div class="block_course_list">' + [42, 43, 44].map(id => `<a href="/course/view.php?id=${id}">Course ${id}</a>`).join("") + '</div>';
+  const context = { URL, AbortSignal, Date, structuredClone, document: html(dashboard), location: { origin: LMS, pathname: "/my/", href: LMS + "/my/" },
+    DOMParser: class { parseFromString(text) { return html(text); } }, setTimeout(resolve) { resolve(); },
+    chrome: { runtime: { onMessage: { addListener(fn) { receiver = fn; } }, async sendMessage(msg) { if (msg.final) finish(msg); return { ok: true }; } } },
+    async fetch() { calls++; return { status: 429, ok: false, headers: { get() { return "2700"; } } }; } };
+  const start = Date.now();
+  runInNewContext(source("parser.js"), context); runInNewContext(source("content.js"), context);
+  receiver({ type: "SCAN" }, {}, () => {});
+  const result = await done;
+  assert.ok(calls <= 2); assert.ok(calls >= 1);
+  assert.ok(result.retryAt >= start + 45 * 60000);
+  assert.ok(result.errors.some(e => /HTTP 429/.test(e.message)));
 });
