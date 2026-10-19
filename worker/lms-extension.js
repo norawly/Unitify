@@ -31,14 +31,14 @@ function cors(request) {
 }
 async function boundedJson(request) {
   if (!request.headers.get("content-type")?.startsWith("application/json")) throw Error("JSON required");
-  if (+request.headers.get("content-length") > 1500000) throw Error("Request too large");
+  if (+request.headers.get("content-length") > 2400000) throw Error("Request too large");
   const reader = request.body?.getReader();
   if (!reader) throw Error("Empty request");
   const chunks = []; let length = 0;
   while (true) {
     const { value, done } = await reader.read(); if (done) break;
     length += value.byteLength;
-    if (length > 1500000) { await reader.cancel(); throw Error("Request too large"); }
+    if (length > 2400000) { await reader.cancel(); throw Error("Request too large"); }
     chunks.push(value);
   }
   const bytes = new Uint8Array(length); let offset = 0;
@@ -78,9 +78,11 @@ export async function handleLms(request, env) {
     const device = await env.DB.prepare("SELECT * FROM lms_devices WHERE token_hash=?").bind(await hash(token)).first();
     if (!device || !permitted(env, device.chat_id) || !await registered(env, device.chat_id)) return reply({ error: "Unauthorized" }, 401);
     if (path.endsWith("/revoke")) { await revokeDevice(env, device.chat_id); return reply({ ok: true }); }
-    if (device.last_sync && Date.now() - device.last_sync < 15000) return reply({ error: "Слишком частая синхронизация. Подождите 15 секунд." }, 429);
+    if (device.last_sync && Date.now() - device.last_sync < 8000) return reply({ error: "Слишком частая синхронизация. Подождите 8 секунд." }, 429);
     const payload = await boundedJson(request);
+    const cards = validateGradeCards(payload?.gradeCards);
     const result = await ingest(env, device, payload);
+    if (cards.length) await saveGradeCards(env, device.chat_id, cards);
     return reply({ ok: true, ...result });
   } catch (e) {
     // Never log request bodies, tokens or private academic snapshots.
@@ -91,6 +93,32 @@ export async function handleLms(request, env) {
   }
 }
 class InputError extends Error { constructor(message, status = 400) { super(message); this.status = status; } }
+export function validateGradeCards(cards = []) {
+  if (!Array.isArray(cards) || cards.length > 30) throw new InputError("Неверные карточки оценок.");
+  const unique = new Set(); let length = 0;
+  for (const c of cards) {
+    if (!c || !/^\d+$/.test(c.courseId) || !Number.isInteger(c.page) || !Number.isInteger(c.pages) || c.pages < 1 || c.pages > 10 || c.page < 0 || c.page >= c.pages ||
+      !/^[a-f0-9]{64}$/.test(c.signature) || typeof c.image !== "string" || c.image.length > 300000 || !/^\/9j\/[A-Za-z0-9+/]*={0,2}$/.test(c.image)) throw new InputError("Неверная карточка оценок.");
+    const key = `${c.courseId}:${c.page}`;
+    if (unique.has(key)) throw new InputError("Повтор карточки.");
+    unique.add(key); length += c.image.length;
+  }
+  if (length > 1600000) throw new InputError("Карточки слишком большие.");
+  return cards;
+}
+export async function saveGradeCards(env, chatId, cards) {
+  const rows = (await env.DB.prepare("SELECT DISTINCT json_extract(data,'$.courseId') id FROM lms_records WHERE chat_id=? AND id LIKE 'grade:%'").bind(chatId).all()).results;
+  const courses = new Set(rows.map(r => r.id));
+  const allowed = cards.filter(c => courses.has(c.courseId));
+  if (!allowed.length) return;
+  // One bounded JSON parameter and two SQL statements, not one subrequest per image.
+  const packed = JSON.stringify(allowed);
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM lms_grade_cards WHERE chat_id=? AND EXISTS (SELECT 1 FROM json_each(?) j WHERE json_extract(j.value,'$.courseId')=course_id AND json_extract(j.value,'$.signature')<>signature)").bind(chatId, packed),
+    env.DB.prepare("INSERT INTO lms_grade_cards(chat_id,course_id,page,pages,signature,image,updated_at) SELECT ?,json_extract(value,'$.courseId'),json_extract(value,'$.page'),json_extract(value,'$.pages'),json_extract(value,'$.signature'),json_extract(value,'$.image'),? FROM json_each(?) WHERE true ON CONFLICT(chat_id,course_id,page) DO UPDATE SET pages=excluded.pages,signature=excluded.signature,image=excluded.image,updated_at=excluded.updated_at")
+      .bind(chatId, Date.now(), packed),
+  ]);
+}
 export async function ingest(env, device, payload) {
   if (!payload || payload.version !== 1 || typeof payload.account !== "string" || !/^\d{1,15}$/.test(payload.account) || !Array.isArray(payload.groups) || payload.groups.length > 250)
     throw new InputError("Неверный формат данных.");

@@ -4,7 +4,8 @@ import { parseHTML } from "linkedom";
 import { readFileSync, readdirSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { DatabaseSync } from "node:sqlite";
-import { createPairCode, handleLms, ingest, applySubmissions, notifyChanges } from "../worker/lms-extension.js";
+import { createPairCode, handleLms, ingest, applySubmissions, notifyChanges, saveGradeCards, validateGradeCards } from "../worker/lms-extension.js";
+import { academicCourses, attendanceLine, gradesMenu, gradePhoto } from "../worker/academic.js";
 import { normalizeRecord, safeUrl, changes } from "../extension/lib/model.mjs";
 import { completed } from "../worker/moodle.js";
 
@@ -212,4 +213,26 @@ test("manifest is narrowly scoped, with no cookie permission, injection or write
   const content = readFileSync(new URL("../extension/content.js", import.meta.url), "utf8");
   assert.ok(!content.includes("document.cookie" + "("));
   assert.ok(content.includes('method: "GET"'));
+});
+
+test("grade selection and private photo work from the database without a Moodle request", async () => {
+  const f = fixture(), original = globalThis.fetch, calls = [];
+  try {
+    await f.pair(); await ingest(f.env, await f.device(), f.payload([grade, attendance]));
+    const cards = [{ courseId: "42", page: 0, pages: 1, signature: "a".repeat(64), image: "/9j/AA==" }];
+    validateGradeCards(cards); await saveGradeCards(f.env, 101, cards);
+    assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM lms_grade_cards WHERE chat_id=202").get().n, 0);
+    f.env.TELEGRAM_TOKEN = "test"; f.env.TG_API = "https://example.invalid";
+    globalThis.fetch = async (url, options) => {
+      assert.ok(!String(url).includes("astanait"));
+      calls.push(options.body instanceof FormData ? options.body : JSON.parse(options.body));
+      return Response.json({ ok: true, result: { message_id: calls.length + 100 } });
+    };
+    await gradesMenu(f.env, 101, "ru");
+    assert.equal(calls[0].reply_markup.inline_keyboard[0][0].callback_data, "lg:42:0");
+    await gradePhoto(f.env, 101, "42");
+    assert.ok(calls[1] instanceof FormData); assert.ok(calls[1].get("photo").size > 0);
+    const [c] = await academicCourses(f.env, 101); assert.match(attendanceLine(c), /100%/);
+    assert.deepEqual(await academicCourses(f.env, 202), []);
+  } finally { globalThis.fetch = original; f.sqlite.close(); }
 });

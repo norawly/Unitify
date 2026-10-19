@@ -6,7 +6,7 @@ import * as T from "./sched.js";
 import * as X from "./text.js";
 import { tg } from "./tg.js";
 
-const LIMIT = { class: 2, deadline: 2, lms: 2, day: 1, due: 1, info: 1, menu: 1 };
+const LIMIT = { class: 2, deadline: 2, lms: 2, academic: 1, day: 1, due: 1, info: 1, menu: 1 };
 const OPTS = { parse_mode: "HTML", link_preview_options: { is_disabled: true } };
 
 const rows = (e, chatId, kind) =>
@@ -96,6 +96,16 @@ export async function post(e, chatId, { kind = "info", photo, text, markup, ref 
     await prune(e, chatId, kind);
   }
   return r;
+}
+
+export async function postImage(e, chatId, { kind, bytes, text, markup }) {
+  const form = new FormData();
+  form.set("chat_id", String(chatId)); form.set("caption", text); form.set("parse_mode", "HTML");
+  form.set("photo", new Blob([bytes], { type: "image/jpeg" }), "grades.jpg");
+  if (markup) form.set("reply_markup", JSON.stringify(markup));
+  const result = await tg(e, "sendPhoto", form);
+  if (result.ok && result.result) { await remember(e, chatId, result.result.message_id, kind); await prune(e, chatId, kind); }
+  return result;
 }
 
 /* правка своего сообщения (кнопки экранов) */

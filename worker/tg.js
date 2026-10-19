@@ -5,8 +5,8 @@ export async function tg(env, method, body) {
   try {
     const res = await fetch(url, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body || {}),
+      ...(body instanceof FormData ? {} : { headers: { "content-type": "application/json" } }),
+      body: body instanceof FormData ? body : JSON.stringify(body || {}),
     });
     const json = await res.json();
     if (!json.ok && !/not modified/i.test(json.description || ""))

@@ -1,93 +1,133 @@
-/* Runs in the user's existing tab/session. Never reads document.cookie or calls a write endpoint. */
+/* Same Chrome session, GET only. No cookies, forms or separate login. */
 (() => {
   const P = globalThis.UnitifyParser, ORIGIN = location.origin;
+  const documentKey = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   let running = false;
   const unsafe = () => /\/mod\/quiz\/(attempt|processattempt|startattempt|summary)\.php/.test(location.pathname) ||
     /(?:action=(?:editsubmission|submit|submitassignment)|\/mod\/assign\/submission)/.test(location.href);
-  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-  const send = message => chrome.runtime.sendMessage(message).catch(() => null);
-  async function scan(options = {}) {
+  const send = message => chrome.runtime.sendMessage(message).catch(() => ({ stop: true }));
+  async function scan(options) {
     if (running || unsafe()) return;
     running = true;
-    const account = P.identity(document);
-    let requests = 0, stopped = false, retryAt = null;
-    const groups = [], errors = [];
-    try {
-      if (!account) throw Error("Войдите в Moodle в этой вкладке.");
-      async function page(url) {
-        if (++requests > 180) throw Error("Лимит страниц за один сбор. Остальное — при следующей проверке.");
-        if (stopped || unsafe() || P.identity(document) !== account) throw Error("Сбор остановлен: страница или аккаунт изменились.");
-        const u = new URL(url, ORIGIN);
-        if (u.origin !== ORIGIN || !/^\/(my\/|course\/view\.php|mod\/(assign|attendance)\/view\.php|grade\/report\/user\/index\.php)$/.test(u.pathname) ||
-            [...u.searchParams.keys()].some(k => !["id", "view"].includes(k))) throw Error("Запрещённый адрес чтения");
-        // At most 20 read requests/minute, sequentially; never navigate through UI tabs.
-        await sleep(3000);
-        let r;
-        try { r = await fetch(u, { method: "GET", credentials: "same-origin", cache: "no-store", redirect: "error", signal: AbortSignal.timeout(25000) }); }
-        catch { stopped = true; retryAt = Date.now() + 5 * 60000; throw Error("Moodle не отвечает. Следующая проверка будет позже."); }
-        if (r.status === 429 || r.status >= 500) {
+    const account = P.identity(document), runId = options.runId;
+    let requests = 0, completed = 0, stopped = false, retryAt = null, active = 0, revision = 0, lastReport = 0;
+    const groups = [], gradeCards = [], errors = [], waiters = [], urls = new Map();
+    const previous = options.catalog?.account === account ? options.catalog : null;
+    const catalog = { account, coursesAt: Date.now(), courses: [] };
+    let reporting = Promise.resolve();
+    function report(final = false) {
+      if (!final && Date.now() - lastReport < 750) return reporting;
+      lastReport = Date.now();
+      reporting = reporting.then(async () => {
+        const response = await send({ type: final ? "RESULT" : "CHECKPOINT", runId, documentKey, account,
+          groups: structuredClone(groups), gradeCards: structuredClone(gradeCards), errors: structuredClone(errors), catalog: structuredClone(catalog),
+          retryAt, pages: completed, requested: requests, revision: ++revision, capturedAt: Date.now(), final });
+        if (response?.stop || response?.error) stopped = true;
+      });
+      return reporting;
+    }
+    async function slot(job) {
+      if (active >= 8) await new Promise(resolve => waiters.push(resolve));
+      active++;
+      try { return await job(); }
+      finally { active--; waiters.shift()?.(); }
+    }
+    async function page(href) {
+      const u = new URL(href, ORIGIN);
+      if (u.origin !== ORIGIN || !/^\/(my\/|course\/view\.php|mod\/(assign|attendance)\/view\.php|grade\/report\/user\/index\.php)$/.test(u.pathname) ||
+          [...u.searchParams.keys()].some(k => !["id", "view"].includes(k))) throw Error("Запрещённый адрес чтения");
+      if (urls.has(u.href)) return urls.get(u.href);
+      const promise = slot(async () => {
+        if (stopped || unsafe() || P.identity(document) !== account) throw Error("Сбор остановлен");
+        if (++requests > 400) throw Error("Достигнут лимит 400 страниц за проход");
+        let response;
+        try { response = await fetch(u, { method: "GET", credentials: "same-origin", cache: "no-store", redirect: "follow", signal: AbortSignal.timeout(20000) }); }
+        catch { stopped = true; retryAt = Date.now() + 60000; throw Error("Moodle не отвечает; повторная проверка позже"); }
+        completed++;
+        if (response.status === 429 || response.status >= 500) {
           stopped = true;
-          const retry = r.headers?.get("retry-after");
+          const retry = response.headers?.get("retry-after");
           const wait = /^\d+$/.test(retry || "") ? +retry * 1000 : retry ? Date.parse(retry) - Date.now() : 0;
-          retryAt = Date.now() + Math.max(r.status === 429 ? 15 * 60000 : 5 * 60000, Number.isFinite(wait) ? wait : 0);
+          retryAt = Date.now() + Math.max(response.status === 429 ? 5 * 60000 : 60000, Number.isFinite(wait) ? wait : 0);
         }
-        if (!r.ok) throw Error(`Moodle: ${r.status}`);
-        const doc = new DOMParser().parseFromString(await r.text(), "text/html");
-        if (P.identity(doc) !== account) { stopped = true; throw Error("Сессия Moodle истекла или сменился аккаунт."); }
+        if (!response.ok) throw Error(`Moodle HTTP ${response.status}`);
+        if (response.url && new URL(response.url).origin !== ORIGIN) throw Error("Moodle перенаправил на другой сайт");
+        const doc = new DOMParser().parseFromString(await response.text(), "text/html");
+        if (P.identity(doc) !== account) { stopped = true; throw Error("Сессия истекла или сменился аккаунт Moodle"); }
         return doc;
-      }
-      async function collect(scope, job) {
-        try { groups.push({ scope, records: await job() }); }
-        catch (e) { errors.push({ scope, message: String(e.message).slice(0, 180) }); }
-        const control = await send({ type: "PROGRESS", account, pages: requests, groups: groups.length, errors: errors.length });
-        if (control?.stop) stopped = true;
-      }
-      const previous = options.catalog?.account === account ? options.catalog : null;
-      const refreshCourses = !previous?.coursesAt || Date.now() - previous.coursesAt > 86400000;
-      const courses = refreshCourses ? P.courses(await page("/my/")) : previous.courses;
-      if (!courses.length) throw Error("Курсы не найдены. Сохранённые данные не изменены.");
-      const catalog = { account, coursesAt: refreshCourses ? Date.now() : previous.coursesAt, courses: [] };
-      for (const course of courses) {
-        let activities;
-        try {
-          const known = previous?.courses.find(c => c.id === course.id);
-          if (known?.discoveredAt && Date.now() - known.discoveredAt < 60 * 60000) {
-            activities = { assignments: known.assignments, attendance: known.attendance };
-            course.discoveredAt = known.discoveredAt;
-          } else {
-            const doc = await page(course.url);
-            const name = P.text(doc.querySelector("#page-header h1, #page h1"));
-            if (name) course.name = name;
-            activities = P.activities(doc);
-            course.discoveredAt = Date.now();
+      });
+      urls.set(u.href, promise);
+      return promise;
+    }
+    function error(scope, e) {
+      if (e.message !== "Сбор остановлен") errors.push({ scope, message: String(e.message).slice(0, 180) });
+    }
+    async function collect(scope, job) {
+      try { groups.push({ scope, records: await job() }); }
+      catch (e) { error(scope, e); }
+      await report();
+    }
+    try {
+      if (!account) throw Error("Сначала войдите в Moodle");
+      let courses = P.courses(document);
+      if (!courses.length) courses = previous?.courses || P.courses(await page("/my/"));
+      if (!courses.length) throw Error("Курсы не найдены");
+      const visibleCourse = new URL(location.href).pathname === "/course/view.php" ? new URL(location.href).searchParams.get("id") : null;
+      await Promise.all(courses.map(async course => {
+        const known = previous?.courses.find(c => c.id === course.id);
+        if (known?.name && known.name.length > course.name.length) course.name = known.name;
+        const entry = { ...course, assignments: [], attendance: [], discoveredAt: 0 };
+        catalog.courses.push(entry);
+        const assignments = new Map(), attendanceJobs = new Map();
+        const gradeJob = collect(`${course.id}:grade`, async () => {
+          const records = P.grades(await page(`/grade/report/user/index.php?id=${course.id}`), course);
+          try {
+            if (globalThis.UnitifyGradeCards) {
+              const cards = await globalThis.UnitifyGradeCards.render(course, records, options.gradeSignatures?.[course.id]);
+              if (gradeCards.reduce((sum, c) => sum + c.image.length, 0) + cards.reduce((sum, c) => sum + c.image.length, 0) <= 1400000) gradeCards.push(...cards);
+              else error(`${course.id}:image`, Error("Карточка отложена до следующей синхронизации: достигнут размер пакета"));
+            }
           }
-          catalog.courses.push({ ...course, ...activities });
-        } catch (e) { errors.push({ scope: `${course.id}:course`, message: e.message }); continue; }
-        await collect(`${course.id}:grade`, async () => P.grades(await page(`/grade/report/user/index.php?id=${course.id}`), course));
-        const assignments = [];
-        for (const item of activities.assignments) {
-          if (stopped || requests >= 180) break;
-          try { assignments.push(P.assignment(await page(item.url), course, item)); }
-          catch (e) { errors.push({ scope: `${course.id}:assignment:${item.id}`, message: e.message }); }
-          const control = await send({ type: "PROGRESS", account, pages: requests, groups: groups.length, errors: errors.length });
-          if (control?.stop) stopped = true;
+          catch (e) { error(`${course.id}:image`, e); }
+          return records;
+        });
+        function enqueue(activities) {
+          for (const item of activities.assignments || []) if (!assignments.has(item.id))
+            assignments.set(item.id, (async () => {
+              try { return P.assignment(await page(item.url), course, item); }
+              catch (e) { error(`${course.id}:assignment:${item.id}`, e); return null; }
+              finally { void report(); }
+            })());
+          for (const item of activities.attendance || []) if (!attendanceJobs.has(item.id))
+            attendanceJobs.set(item.id, collect(`${course.id}:attendance:${item.id}`, async () => P.attendance(await page(item.url + "&view=5"), course, item)));
         }
-        if (assignments.length) groups.push({ scope: `${course.id}:assignment`, records: assignments });
-        for (const item of activities.attendance)
-          if (!stopped && requests < 180) await collect(`${course.id}:attendance:${item.id}`, async () => P.attendance(await page(item.url + "&view=5"), course, item));
-        if (requests >= 180) errors.push({ scope: "scan", message: "Достигнут лимит 180 страниц; часть разделов не проверена." });
-        if (requests >= 180 || stopped) break;
-      }
-      // Preserve any courses not reached in a partial/paused scan.
-      for (const known of courses) if (!catalog.courses.some(c => c.id === known.id)) catalog.courses.push(
-        previous?.courses.find(c => c.id === known.id) || { ...known, discoveredAt: 0, assignments: [], attendance: [] });
-      await send({ type: "RESULT", account, groups, errors, catalog, retryAt, capturedAt: Date.now() });
-    } catch (e) { await send({ type: "SCAN_ERROR", message: e.message, retryAt }); }
-    finally { running = false; }
+        if (known) enqueue(known);
+        try {
+          const doc = visibleCourse === course.id ? document : await page(course.url);
+          const name = P.text(doc.querySelector("#page-header h1, #page h1"));
+          if (name) course.name = name;
+          const activities = P.activities(doc);
+          Object.assign(entry, { ...course, ...activities, discoveredAt: Date.now() });
+          enqueue(activities);
+        } catch (e) { error(`${course.id}:course`, e); if (known) Object.assign(entry, known); }
+        const results = await Promise.all([...assignments.values()]);
+        if (results.some(Boolean)) groups.push({ scope: `${course.id}:assignment`, records: results.filter(Boolean) });
+        await Promise.all([gradeJob, ...attendanceJobs.values()]);
+        for (const group of groups) for (const record of group.records) if (record.courseId === course.id) record.course = course.name;
+        await report();
+      }));
+      await report(true);
+    } catch (e) {
+      error("scan", e);
+      await report(true);
+    } finally { running = false; }
   }
   chrome.runtime.onMessage.addListener((message, _sender, reply) => {
-    if (message.type === "CHECK") reply({ account: P.identity(document), unsafe: unsafe() });
-    if (message.type === "SCAN") { reply({ accepted: !running && !unsafe() }); void scan(message); }
+    if (message.type === "CHECK") reply({ account: P.identity(document), unsafe: unsafe(), documentKey });
+    if (message.type === "SCAN") {
+      const accepted = !running && !unsafe(); reply({ accepted });
+      if (accepted) void scan(message);
+    }
   });
-  void send({ type: "READY", account: P.identity(document), unsafe: unsafe() });
+  void send({ type: "READY", account: P.identity(document), unsafe: unsafe(), documentKey });
 })();

@@ -1,16 +1,16 @@
 {
   "manifest_version": 3,
-  "name": "Unitify · Moodle Reader",
-  "version": "0.1.0",
+  "name": "Unitify Bridge",
+  "version": "0.2.0",
   "icons": { "128": "icons/icon-192.png" },
   "description": "Read-only homework, attendance and grade sync with your Unitify Telegram bot.",
   "permissions": ["storage", "alarms"],
   "host_permissions": ["https://lms.astanait.edu.kz/*", "https://s.zhengisbay.com/*"],
   "background": { "service_worker": "background.js", "type": "module" },
-  "action": { "default_title": "Unitify · Moodle Reader", "default_popup": "popup.html" },
+  "action": { "default_title": "Unitify Bridge", "default_popup": "popup.html" },
   "content_scripts": [{
     "matches": ["https://lms.astanait.edu.kz/*"],
-    "js": ["parser.js", "content.js"],
+    "js": ["parser.js", "grade-card.js", "content.js"],
     "run_at": "document_idle",
     "all_frames": false
   }]

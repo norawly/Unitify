@@ -41,10 +41,12 @@ test("profiles without an exam period do not hide deadlines", () => {
     astana("2026-10-14T12:00:00Z")), true);
 });
 
-test("reply keyboard has four actions; timetable remains in the separate app button", () => {
+test("reply keyboard includes grades and attendance; timetable remains in the separate app button", () => {
   const keyboard = menuKeyboard({ PUBLIC_URL: "https://s.zhengisbay.com" },
     { person: "nurali", lang: "en" });
-  assert.equal(keyboard.keyboard.flat().length, 4);
+  assert.equal(keyboard.keyboard.flat().length, 6);
+  assert.ok(keyboard.keyboard.flat().some(b => b.text === "📊 Grades"));
+  assert.ok(keyboard.keyboard.flat().some(b => b.text === "📍 Attendance"));
   assert.equal(keyboard.keyboard.flat().some(button => button.web_app), false);
 });
 

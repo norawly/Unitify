@@ -24,9 +24,12 @@ export function normalizeRecord(r) {
     out.due = Number.isSafeInteger(r.due) && r.due > 0 ? r.due : null;
     out.dueText = clean(r.dueText, 200);
     out.modified = clean(r.modified, 200);
+    out.description = clean(r.description, 8000);
+    out.submissionText = clean(r.submissionText, 300);
   } else if (r.kind === "grade") {
     out.value = clean(r.value, 100); out.range = clean(r.range, 100);
     out.feedback = clean(r.feedback, 1000);
+    out.weight = clean(r.weight, 100); out.percentage = clean(r.percentage, 100);
   } else {
     out.status = clean(r.status, 100); out.points = clean(r.points, 100);
     out.dateText = clean(r.dateText, 200); out.remarks = clean(r.remarks, 500);

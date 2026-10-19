@@ -17,15 +17,17 @@ test("content scanner reads arbitrary course names with GET and no session expor
   const grades = '<table class="user-grade"><tr><th class="column-itemname" id="row_77_999">Lab A</th><td class="column-grade">90</td></tr></table>';
   const attendance = '<table><tr><th class="datecol">Date</th><th class="statuscol">Status</th></tr><tr><td class="datecol">Mon 19 Oct 2026 12PM</td><td class="statuscol">Present</td></tr></table>';
   const pages = new Map([["/my/", dashboard], ["/course/view.php?id=42", course], ["/mod/assign/view.php?id=123", assign], ["/grade/report/user/index.php?id=42", grades], ["/mod/attendance/view.php?id=456&view=5", attendance]]);
-  const calls = []; let receiver, finish;
+  const calls = []; let receiver, finish, fetching = 0, peak = 0;
   const done = new Promise(resolve => { finish = resolve; });
   const context = { URL, AbortSignal, Date, document: html(dashboard), location: { origin: LMS, pathname: "/my/", href: LMS + "/my/" },
     DOMParser: class { parseFromString(text) { return html(text); } },
-    setTimeout(resolve) { resolve(); },
+    structuredClone, setTimeout(resolve) { resolve(); },
     chrome: { runtime: { onMessage: { addListener(fn) { receiver = fn; } }, async sendMessage(message) {
       if (["RESULT", "SCAN_ERROR"].includes(message.type)) finish(message); return { ok: true };
     } } },
     async fetch(url, options) {
+      fetching++; peak = Math.max(peak, fetching);
+      await new Promise(resolve => setImmediate(resolve)); fetching--;
       const u = new URL(url); calls.push({ path: u.pathname + u.search, options });
       const body = pages.get(u.pathname + u.search); assert.ok(body, "unexpected URL " + u);
       return { ok: true, status: 200, async text() { return body; } };
@@ -40,8 +42,9 @@ test("content scanner reads arbitrary course names with GET and no session expor
   assert.equal(records.find(r => r.kind === "assignment").status, "submitted");
   assert.ok(calls.every(c => c.options.method === "GET" && c.options.credentials === "same-origin"));
   assert.ok(calls.every(c => !c.path.includes("action=") && !c.options.body));
+  assert.ok(peak > 1 && peak <= 8, `parallel requests: ${peak}`);
   assert.equal(result.catalog.courses.length, 1);
-  // Repeat with the cached catalogue: no dashboard or subject-page request.
+  // Repeat: direct grade/activity reads; course discovery still checks for new tasks.
   calls.length = 0;
   const again = new Promise(resolve => { finish = resolve; });
   const nextContext = { ...context };
@@ -49,8 +52,8 @@ test("content scanner reads arbitrary course names with GET and no session expor
   receiver({ type: "SCAN", catalog: result.catalog }, {}, () => {});
   const second = await again;
   assert.equal(second.groups.flatMap(g => g.records).length, 3);
-  assert.equal(calls.length, 3);
-  assert.ok(calls.every(c => !c.path.startsWith("/my/") && !c.path.startsWith("/course/")));
+  assert.equal(calls.length, 4);
+  assert.ok(calls.every(c => !c.path.startsWith("/my/")));
 });
 
 function background(seed = {}, open = []) {
@@ -61,7 +64,7 @@ function background(seed = {}, open = []) {
     tabs: { async query() { return open; }, async sendMessage(id, message) { actions.push({ id, message }); return message.type === "CHECK" ? { account: "999", unsafe: false } : { accepted: true }; }, async create() {} },
     alarms: { async create() {}, onAlarm: { addListener() {} } }, action: { onClicked: { addListener() {} } },
   };
-  runInNewContext(source("background.js").replace(/^import .*;\s*/m, ""), { chrome, VERSION, normalizeRecord, changes, URL, Date, AbortSignal, fetch: async () => { throw Error("Network must not be used by this test"); } });
+  runInNewContext(source("background.js").replace(/^import .*;\s*/m, ""), { chrome, VERSION, normalizeRecord, changes, URL, Date, AbortSignal, setTimeout, fetch: async () => { throw Error("Network must not be used by this test"); } });
   const ui = { id: ID, url: `chrome-extension://${ID}/popup.html` };
   const content = { id: ID, url: LMS + "/my/", tab: { id: 7 } };
   const send = (message, sender = ui) => new Promise(resolve => handler(message, sender, resolve));
@@ -110,4 +113,15 @@ test("an unsolicited content result cannot overwrite the selected scanner tab", 
   const b = background({ activeTab: 8 });
   const response = await b.send({ type: "RESULT", account: "123", groups: [], errors: [], capturedAt: Date.now() }, b.content);
   assert.equal(response.stop, true); assert.equal(b.data.accounts, undefined);
+});
+
+test("partial results survive a bad record and remain available before the scan ends", async () => {
+  const b = background({ token: "fixture", paused: false, activeTab: 7, runId: "scan", scanUploaded: true });
+  await b.send({ type: "CHECKPOINT", runId: "scan", account: "999", final: false, pages: 3, capturedAt: Date.now(), errors: [{ scope: "42:course", message: "Synthetic parser failure" }], groups: [{ scope: "42:grade", records: [
+    { kind: "grade", id: "grade:1", courseId: "42", course: "Course", title: "Lab", url: LMS + "/grade/report/user/index.php?id=42", value: "90" },
+    { kind: "grade", id: "grade:2", courseId: "42", course: "Course", title: "", url: LMS + "/grade/report/user/index.php?id=42", value: "80" },
+  ] }] }, b.content);
+  assert.equal(Object.keys(b.data.accounts["999"].records).length, 1);
+  assert.equal(b.data.activeTab, 7); assert.equal(b.data.errors.length, 2);
+  const report = await b.send({ type: "DIAGNOSTICS" }); assert.equal(report.counts.grade, 1); assert.equal(report.errors.length, 2);
 });

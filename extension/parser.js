@@ -63,28 +63,34 @@
       const row = a.closest(".activity") || a.parentElement;
       const dates = [...row.querySelectorAll('[data-region="activity-dates"] .date-item')];
       const dueRow = dates.find(el => /^(due|срок сдачи|последний срок)/iu.test(text(el)));
-      const item = { ...l, title: text(a), dueText: text(dueRow).replace(/^[^:]+:\s*/, "") };
-      (l.url.includes("/assign/") ? assignments : attendance).set(l.id, item);
+      const title = text(a) || row.querySelector('[data-activityname]')?.getAttribute("data-activityname") || "";
+      const item = { ...l, title, dueText: text(dueRow).replace(/^[^:]+:\s*/, "") };
+      const target = l.url.includes("/assign/") ? assignments : attendance;
+      if (title && (!target.has(l.id) || target.get(l.id).title.length < title.length)) target.set(l.id, item);
     }
     return { assignments: [...assignments.values()], attendance: [...attendance.values()] };
   }
   function assignment(doc, course, item) {
-    const table = doc.querySelector("#region-main .submissionstatustable table, #region-main table.generaltable");
-    if (!table || !table.querySelector('[class*="submissionstatus"]')) throw Error("Assignment status table unavailable");
-    const rows = [...table.querySelectorAll("tr")];
+    const tables = [...doc.querySelectorAll("#region-main table.generaltable, #region-main .submissionstatustable table")];
+    const table = tables.find(t => t.querySelector('[class*="submissionstatus"]')) || tables.find(t => /submission status|состояние ответа/iu.test(text(t)));
+    if (!table && !doc.querySelector('#intro, [data-region="activity-information"], [id*="intro"], body#page-mod-assign-view')) throw Error("Assignment status table unavailable");
+    const rows = table ? [...table.querySelectorAll("tr")] : [];
     const value = regex => text(rows.find(r => regex.test(text(r.querySelector("th"))))?.querySelector("td"));
-    const statusCell = table.querySelector('[class*="submissionstatus"]');
-    const cls = statusCell.className, statusText = text(statusCell);
+    const statusCell = table?.querySelector('[class*="submissionstatus"]');
+    const cls = statusCell?.className || "", statusText = text(statusCell) || value(/submission status|состояние ответа/iu);
     let status = "unknown";
     if (/submissionstatussubmitted/.test(cls)) status = "submitted";
     else if (/submissionstatusdraft/.test(cls)) status = "draft";
     else if (/submissionstatusnew|submissionstatusnosubmission/.test(cls)) status = "not_submitted";
     else if (/^submitted for grading|^сдано для оценивания/iu.test(statusText)) status = "submitted";
+    else if (/^draft|^черновик/iu.test(statusText)) status = "draft";
+    else if (/^no (?:submission|attempt)|^not submitted|^ответ.*не.*представлен/iu.test(statusText)) status = "not_submitted";
     const dueRow = [...doc.querySelectorAll('[data-region="activity-dates"] .date-item')].find(el => /^(due|срок сдачи|последний срок)/iu.test(text(el)));
     const dueText = text(dueRow).replace(/^[^:]+:\s*/, "") || value(/due date|срок сдачи/iu) || item.dueText;
     return { kind: "assignment", id: `assignment:${item.id}`, courseId: course.id, course: course.name,
       title: item.title, url: item.url, status, grading: value(/grading status|состояние оценивания/iu),
-      due: date(dueText), dueText, modified: value(/last modified|последнее изменение/iu) };
+      due: date(dueText), dueText, modified: value(/last modified|последнее изменение/iu),
+      description: text(doc.querySelector("#intro, [id*='intro']")).slice(0, 8000), submissionText: statusText };
   }
   function grades(doc, course) {
     const table = doc.querySelector("table.user-grade");
@@ -96,7 +102,8 @@
       if (!id || !text(name)) return [];
       return [{ kind: "grade", id: `grade:${id}`, courseId: course.id, course: course.name, title: text(name),
         url: `${ORIGIN}/grade/report/user/index.php?id=${course.id}`, value: text(grade),
-        range: text(row.querySelector(".column-range")), feedback: text(row.querySelector(".column-feedback")) }];
+        range: text(row.querySelector(".column-range")), feedback: text(row.querySelector(".column-feedback")),
+        weight: text(row.querySelector(".column-weight")), percentage: text(row.querySelector(".column-percentage")) }];
     });
   }
   function hash(s) {
