@@ -39,7 +39,7 @@ async function run(preferredTab = null) {
     if (!check?.account || check.unsafe) return store.set({ status: "Сначала войдите в Moodle. Во время теста сбор отключён." });
     if (state.boundAccount && check.account !== state.boundAccount) return store.set({ status: "Открыт другой Moodle-аккаунт. Сбор остановлен." });
     // Refresh only data (schedule, numeric limits, release number), never code.
-    if (!state.contextAt || Date.now() - state.contextAt > 6 * 3600000) {
+    if (!state.contextAt || !Object.hasOwn(state.syncContext || {}, "group") || Date.now() - state.contextAt > 6 * 3600000) {
       try {
         const context = await api("context", {}, state.token);
         state.syncContext = context.syncContext;
@@ -54,7 +54,7 @@ async function run(preferredTab = null) {
     plan.skipAssignments = plan.auditAssignments ? [] : Object.keys(old || {}).filter(id => id.startsWith("assignment:") && !assignmentNeeded({ id: id.split(":")[1] }, old, Date.now())).map(id => id.split(":")[1]);
     const runId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     await store.set({ runId, scanPlan: plan, scanUploaded: false, lastStart: Date.now(), scanStarted: Date.now(), scanHeartbeat: Date.now(), activeTab: tab.id, activeDocument: check.documentKey, errors: [], status: "Обновляю базу Moodle…" });
-    const result = await chrome.tabs.sendMessage(tab.id, { type: "SCAN", runId, plan, catalog: state.catalogs?.[check.account], gradeSignatures: state.gradeSignatures?.[check.account] || {} });
+    const result = await chrome.tabs.sendMessage(tab.id, { type: "SCAN", runId, plan, group: state.syncContext?.group || "", savedGrades: Object.values(old || {}).filter(r => r.kind === "grade"), catalog: state.catalogs?.[check.account], gradeSignatures: state.gradeSignatures?.[check.account] || {} });
     if (!result?.accepted) await store.set({ scanStarted: null, activeTab: null, status: "Обновите вкладку Moodle, затем повторите сбор." });
   } catch { await store.set({ scanStarted: null, activeTab: null, status: "Обновите вкладку Moodle, затем повторите сбор." }); }
   finally { busy = false; }
@@ -134,7 +134,7 @@ async function receive(result) {
       `${result.final ? "Обновлено" : "Получено"}: ${Object.keys(records).length} записей · ${result.pages || 0} страниц${errors.length ? ` · ошибок: ${errors.length}` : ""}` };
   if (result.final) Object.assign(update, { lastScan: result.capturedAt, scanStarted: null, activeTab: null, activeDocument: null });
   await store.set(update);
-  if (groups.length && (result.final || !state.scanUploaded)) await cloudSync(!!result.final);
+  if ((groups.length || result.gradeCards?.length) && (result.final || !state.scanUploaded)) await cloudSync(!!result.final);
 }
 async function message(msg, sender) {
   const ui = extensionSender(sender), content = contentSender(sender);

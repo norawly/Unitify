@@ -1,4 +1,5 @@
 // Shared, bounded wire format. Cookies, HTML, session keys and files are never fields.
+import { gradeTitle, gradeValue } from "./grade-view.mjs";
 export const VERSION = 1;
 export const clean = (s, max = 500) => String(s ?? "").replace(/[\u0000-\u0008\u000b-\u001f]/g, "").trim().slice(0, max);
 export function safeUrl(value) {
@@ -27,7 +28,10 @@ export function normalizeRecord(r) {
     out.description = clean(r.description, 8000);
     out.submissionText = clean(r.submissionText, 300);
   } else if (r.kind === "grade") {
-    out.value = clean(r.value, 100); out.range = clean(r.range, 100);
+    out.activityType = ["assignment", "quiz", "attendance", "calculated", "other"].includes(r.activityType) ? r.activityType : "other";
+    out.title = clean(gradeTitle(out.title), 300);
+    if (!out.title) throw Error("Incomplete grade title");
+    out.value = clean(gradeValue(r.value), 100); out.range = clean(r.range, 100);
     out.feedback = clean(r.feedback, 1000);
     out.weight = clean(r.weight, 100); out.percentage = clean(r.percentage, 100);
   } else {
@@ -38,7 +42,7 @@ export function normalizeRecord(r) {
 }
 export function changes(before, after) {
   if (!before) return "new";
-  if (after.kind === "grade") return ["value", "feedback"].some(k => before[k] !== after[k]) ? "changed" : null;
+  if (after.kind === "grade") return gradeValue(before.value) !== gradeValue(after.value) || before.feedback !== after.feedback ? "changed" : null;
   if (after.kind === "assignment") return ["status", "due"].some(k => before[k] !== after[k]) ? "changed" : null;
   return ["status", "points", "remarks"].some(k => before[k] !== after[k]) ? "changed" : null;
 }

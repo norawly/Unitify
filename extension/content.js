@@ -90,18 +90,26 @@
         const entry = { ...course, assignments: known?.assignments || [], attendance: known?.attendance || [], discoveredAt: known?.discoveredAt || 0 };
         catalog.courses.push(entry);
         const assignments = new Map(), attendanceJobs = new Map();
-        const gradeJob = plan.grades && !fresh(`${course.id}:grade`) ? collect(`${course.id}:grade`, async () => {
-          const records = P.grades(await page(`/grade/report/user/index.php?id=${course.id}`), course);
+        const renderGrades = async records => {
           try {
             if (globalThis.UnitifyGradeCards) {
-              const cards = await globalThis.UnitifyGradeCards.render(course, records, options.gradeSignatures?.[course.id]);
+              const cards = await globalThis.UnitifyGradeCards.render(course, records, options.gradeSignatures?.[course.id], options.group || "");
               if (gradeCards.reduce((sum, c) => sum + c.image.length, 0) + cards.reduce((sum, c) => sum + c.image.length, 0) <= 1400000) gradeCards.push(...cards);
               else error(`${course.id}:image`, Error("Карточка отложена до следующей синхронизации: достигнут размер пакета"));
             }
           }
           catch (e) { error(`${course.id}:image`, e); }
+        };
+        const gradeJob = plan.grades && !fresh(`${course.id}:grade`) ? collect(`${course.id}:grade`, async () => {
+          const records = P.grades(await page(`/grade/report/user/index.php?id=${course.id}`), course);
+          await renderGrades(records);
           return records;
-        }) : Promise.resolve();
+        }) : (async () => {
+          // Layout updates can use the last snapshot, even at night, without
+          // making any extra Moodle request or pretending it is newly read.
+          const saved = (options.savedGrades || []).filter(r => r.courseId === course.id);
+          if (saved.length) await renderGrades(saved);
+        })();
         function enqueue(activities) {
           for (const item of activities.assignments || []) if (!assignments.has(item.id) && (item.id === visibleAssignment || (!fresh(`${course.id}:assignment`) && !skipAssignments.has(item.id))))
             assignments.set(item.id, (async () => {

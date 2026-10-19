@@ -100,8 +100,16 @@
       if (!name || !grade) return [];
       const id = name.id?.match(/^row_(\d+)_\d+$/)?.[1];
       if (!id || !text(name)) return [];
-      return [{ kind: "grade", id: `grade:${id}`, courseId: course.id, course: course.name, title: text(name),
-        url: `${ORIGIN}/grade/report/user/index.php?id=${course.id}`, value: text(grade),
+      const label = name.cloneNode(true);
+      label.querySelectorAll('.gradeitemdescription,.icon,.itemicon,.accesshide,.sr-only,.visually-hidden').forEach(el => el.remove());
+      const cell = grade.cloneNode(true);
+      cell.querySelectorAll('.gradeanalysis,.gradeanalysislink,.grade-analysis,.accesshide,.sr-only,.visually-hidden,a[href*="/grade/analysis/"]').forEach(el => el.remove());
+      const linked = label.querySelector('a[href*="/mod/"]');
+      const icon = name.querySelector('img[alt],img[title]');
+      const hint = [icon?.getAttribute("src"), icon?.getAttribute("alt"), icon?.getAttribute("title"), linked?.getAttribute("href")].filter(Boolean).join(" ");
+      const activityType = /attendance/iu.test(hint) ? "attendance" : /calculated|calc/iu.test(hint) || row.classList.contains("coursetotal") ? "calculated" : /quiz/iu.test(hint) ? "quiz" : /assign/iu.test(hint) ? "assignment" : "other";
+      return [{ kind: "grade", id: `grade:${id}`, courseId: course.id, course: course.name, title: text(linked || label), activityType,
+        url: `${ORIGIN}/grade/report/user/index.php?id=${course.id}`, value: text(cell.querySelector('.gradevalue') || cell).replace(/\s*Grade\s*analysis[\s\S]*$/iu, "").trim(),
         range: text(row.querySelector(".column-range")), feedback: text(row.querySelector(".column-feedback")),
         weight: text(row.querySelector(".column-weight")), percentage: text(row.querySelector(".column-percentage")) }];
     });

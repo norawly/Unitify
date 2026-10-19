@@ -10,13 +10,14 @@ const samples = [
   { kind: "attendance", id: "attendance:1:abc", course: "Example Course · Demo", title: "Lecture · DEMO", status: "Present", points: "2 / 2", dateText: "Mon · 12:00–14:00", url: "https://lms.astanait.edu.kz/my/" },
 ];
 const state = { connected: false, status: "Демонстрация интерфейса · синтетические данные", account: "DEMO", lastScan: Date.now(), accounts: { DEMO: { records: Object.fromEntries(samples.map(s => [s.id, s])), history: [] } } };
-const mock = `const demo=${JSON.stringify(state)};window.chrome={runtime:{sendMessage:async m=>{if(m.type==='STATE')return demo;if(m.type==='PAUSE')demo.paused=m.paused;return {ok:true}}},storage:{onChanged:{addListener(){}}}};`;
+const mock = `const demo=${JSON.stringify(state)};window.chrome={runtime:{getManifest:()=>({version:'0.3.1'}),sendMessage:async m=>{if(m.type==='STATE')return demo;if(m.type==='PAUSE')demo.paused=m.paused;return {ok:true}}},storage:{onChanged:{addListener(){}}}};`;
 createServer(async (req, res) => {
   try {
     if (req.url === "/mock-chrome.js") { res.setHeader("content-type", "application/javascript"); return res.end(mock); }
     const path = new URL(req.url, "http://localhost").pathname;
+    if (path === "/grades") { res.setHeader("content-type", "text/html; charset=utf-8"); return res.end(await readFile(resolve(import.meta.dirname, "grade-preview.html"))); }
     if (path === "/icons/icon-192.png") { res.setHeader("content-type", "image/png"); return res.end(await readFile(resolve(root, "." + path))); }
-    if (!["/popup.html", "/popup.js", "/popup.css"].includes(path)) { res.writeHead(404); return res.end(); }
+    if (!["/popup.html", "/popup.js", "/popup.css", "/grade-card.js", "/lib/grade-view.mjs"].includes(path)) { res.writeHead(404); return res.end(); }
     let body = await readFile(resolve(root, "." + path), "utf8");
     if (path.endsWith(".html")) body = body.replace('<script type="module"', '<script src="/mock-chrome.js"></script><script type="module"');
     res.setHeader("content-type", path.endsWith(".html") ? "text/html; charset=utf-8" : path.endsWith(".css") ? "text/css" : "application/javascript"); res.end(body);

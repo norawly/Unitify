@@ -1,13 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Unitify Bridge",
-  "version": "0.3.0",
+  "version": "0.3.1",
+  "homepage_url": "https://s.zhengisbay.com/bridge-privacy.html",
   "icons": { "128": "icons/icon-192.png" },
   "description": "Read-only homework, attendance and grade sync with your Unitify Telegram bot.",
   "permissions": ["storage", "alarms"],
   "host_permissions": ["https://lms.astanait.edu.kz/*", "https://s.zhengisbay.com/*"],
   "background": { "service_worker": "background.js", "type": "module" },
   "action": { "default_title": "Unitify Bridge", "default_popup": "popup.html" },
+  "web_accessible_resources": [{ "resources": ["lib/grade-view.mjs"], "matches": ["https://lms.astanait.edu.kz/*"] }],
   "content_scripts": [{
     "matches": ["https://lms.astanait.edu.kz/*"],
     "js": ["parser.js", "grade-card.js", "content.js"],

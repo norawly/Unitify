@@ -100,6 +100,7 @@ export function validateGradeCards(cards = []) {
   const unique = new Set(); let length = 0;
   for (const c of cards) {
     if (!c || !/^\d+$/.test(c.courseId) || !Number.isInteger(c.page) || !Number.isInteger(c.pages) || c.pages < 1 || c.pages > 10 || c.page < 0 || c.page >= c.pages ||
+      ![1, 2].includes(c.format ?? 1) || (c.group !== undefined && (typeof c.group !== "string" || c.group.length > 40)) ||
       !/^[a-f0-9]{64}$/.test(c.signature) || typeof c.image !== "string" || c.image.length > 300000 || !/^\/9j\/[A-Za-z0-9+/]*={0,2}$/.test(c.image)) throw new InputError("Неверная карточка оценок.");
     const key = `${c.courseId}:${c.page}`;
     if (unique.has(key)) throw new InputError("Повтор карточки.");
@@ -114,10 +115,10 @@ export async function saveGradeCards(env, chatId, cards) {
   const allowed = cards.filter(c => courses.has(c.courseId));
   if (!allowed.length) return;
   // One bounded JSON parameter and two SQL statements, not one subrequest per image.
-  const packed = JSON.stringify(allowed);
+  const packed = JSON.stringify(allowed.map(c => ({ ...c, format: c.format ?? 1, group: c.group || "" })));
   await env.DB.batch([
     env.DB.prepare("DELETE FROM lms_grade_cards WHERE chat_id=? AND EXISTS (SELECT 1 FROM json_each(?) j WHERE json_extract(j.value,'$.courseId')=course_id AND json_extract(j.value,'$.signature')<>signature)").bind(chatId, packed),
-    env.DB.prepare("INSERT INTO lms_grade_cards(chat_id,course_id,page,pages,signature,image,updated_at) SELECT ?,json_extract(value,'$.courseId'),json_extract(value,'$.page'),json_extract(value,'$.pages'),json_extract(value,'$.signature'),json_extract(value,'$.image'),? FROM json_each(?) WHERE true ON CONFLICT(chat_id,course_id,page) DO UPDATE SET pages=excluded.pages,signature=excluded.signature,image=excluded.image,updated_at=excluded.updated_at")
+    env.DB.prepare("INSERT INTO lms_grade_cards(chat_id,course_id,page,pages,signature,image,updated_at,format,student_group) SELECT ?,json_extract(value,'$.courseId'),json_extract(value,'$.page'),json_extract(value,'$.pages'),json_extract(value,'$.signature'),json_extract(value,'$.image'),?,json_extract(value,'$.format'),json_extract(value,'$.group') FROM json_each(?) WHERE true ON CONFLICT(chat_id,course_id,page) DO UPDATE SET pages=excluded.pages,signature=excluded.signature,image=excluded.image,updated_at=excluded.updated_at,format=excluded.format,student_group=excluded.student_group")
       .bind(chatId, Date.now(), packed),
   ]);
 }

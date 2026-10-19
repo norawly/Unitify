@@ -1,0 +1,14 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Unitify · synthetic grade preview</title>
+<style>body{margin:20px;background:#10141c;color:#c6d0e4;font:14px system-ui}img{display:block;max-width:800px;width:100%;margin-bottom:20px}p{color:#8295b7}</style>
+<p>Layout preview · synthetic example data, not a student's grades</p><main id="cards">Rendering…</main>
+<script src="/grade-card.js"></script><script type="module">
+import * as V from '/lib/grade-view.mjs';
+globalThis.UnitifyGradeView = V;
+let id = 0;
+const row = (title, value = '-', extra = {}) => ({ id: 'grade:' + ++id, courseId: '42', title, value, range: '0–100', weight: '-', ...extra });
+const records = [row('Calculated gradeRegister Midterm', '87.50'), row('Calculated gradeRegister Interim'), row('Calculated gradeRegister Term', '0.00'), row('Calculated gradeRegister Final'), row('Calculated gradeRegister(not to edit) total', '0.00'), row('Calculated gradeCourse total', '0.00'), row('AttendanceAttendance', '85.00'), row('AssignmentMidterm', '88.00'), row('AssignmentEndterm'), row('QuizFinal Test'), row('AssignmentFinal Exam'), row('QuizFinal Test FX'), row('AssignmentFinal Exam FX'), row('AssignmentAssignment 1', '95.00 Grade analysis'), row('AssignmentAssignment 2 - Long practical exercise about virtual networks and their configurations', '90.00'), row('AssignmentAssignment 10'), row('AssignmentPractice tasks week 5 CS-0002'), row('AssignmentPractice tasks week 5 CS-0001', '92.00'), row('AssignmentROS')];
+try {
+ const cards = await UnitifyGradeCards.render({id:'42', name:'Example Security Course | Demo'}, records, null, 'CS-0001');
+ document.querySelector('#cards').replaceChildren(...cards.map(c=>{ const img=document.createElement('img');img.alt='Synthetic grade card';img.src='data:image/jpeg;base64,'+c.image;return img; }));
+} catch(e) { document.querySelector('#cards').textContent='Render error: '+e.message; }
+</script></html>

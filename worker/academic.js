@@ -1,5 +1,7 @@
 import * as M from "./msgs.js";
 import { esc } from "./text.js";
+import { gradeView, CARD_FORMAT } from "../extension/lib/grade-view.mjs";
+import { syncContext } from "./lms-policy.js";
 
 const short = name => String(name).split("|")[0].trim();
 export async function academicCourses(env, chatId) {
@@ -39,8 +41,23 @@ export async function attendanceReport(env, chatId, lang) {
 export async function gradePhoto(env, chatId, courseId, page = 0) {
   const courses = await academicCourses(env, chatId), course = courses.find(c => c.id === courseId);
   if (!course) return;
-  const first = await env.DB.prepare("SELECT pages,updated_at FROM lms_grade_cards WHERE chat_id=? AND course_id=? AND page=0").bind(chatId, courseId).first();
-  if (!first || first.updated_at < course.gradesUpdatedAt || page < 0 || page >= first.pages) return M.post(env, chatId, { kind: "academic", text: `<b>${esc(course.name)}</b>\n\n` + course.grades.slice(0, 25).map(r => `${esc(r.title.slice(0, 65))} — <b>${esc(r.value)}</b>`).join("\n") + "\n\nКарточка появится после обновления Unitify Bridge." });
+  const { group } = await syncContext(env, chatId);
+  const first = await env.DB.prepare("SELECT pages,updated_at,format,student_group FROM lms_grade_cards WHERE chat_id=? AND course_id=? AND page=0").bind(chatId, courseId).first();
+  if (!first || first.format !== CARD_FORMAT || first.student_group !== group || first.updated_at < course.gradesUpdatedAt || page < 0 || page >= first.pages) {
+    const view = gradeView(course.grades, group);
+    const labels = { registry: "Register / totals", attendance: "Attendance", exams: "Exams & checkpoints", assignments: "Assignments & practice" };
+    let text = `<b>${esc(course.name)}</b>\n`;
+    for (const [key, records] of Object.entries(view.sections)) {
+      if (!records.length) continue;
+      text += `\n<b>${labels[key]}</b>\n`;
+      for (const r of records) {
+        const line = `${esc(r.title.slice(0, 75))} — <b>${esc(r.value)}</b>\n`;
+        if (text.length + line.length > 3400) { text += "…\n"; break; }
+        text += line;
+      }
+    }
+    return M.post(env, chatId, { kind: "academic", text: text + "\nНовая карточка появится после синхронизации Unitify Bridge 0.3.1." });
+  }
   const card = await env.DB.prepare("SELECT image FROM lms_grade_cards WHERE chat_id=? AND course_id=? AND page=?").bind(chatId, courseId, page).first();
   if (!card) return;
   const bytes = Uint8Array.from(atob(card.image), c => c.charCodeAt(0));

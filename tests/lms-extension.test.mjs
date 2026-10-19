@@ -80,6 +80,12 @@ test("grade parsing keeps zero, old calculated totals and real item IDs", () => 
   assert.equal(g.title, "Unusual Course Total"); assert.equal(g.feedback, "Checked");
   assert.throws(() => P.grades(doc("<table></table>"), course), /unavailable/);
 });
+test("grade parser separates activity-type descriptions and grade-analysis UI from real values", () => {
+  const d = doc(`<table class="user-grade"><tr><th class="column-itemname" id="row_91_999"><img class="icon" alt="Assignment"><span class="gradeitemdescription">Assignment</span><a href="/mod/assign/view.php?id=123">Assignment 1</a></th><td class="column-grade">100.00 <a class="gradeanalysislink">Grade analysis</a></td></tr><tr><th class="column-itemname" id="row_92_999"><img alt="Attendance"><span class="gradeitemdescription">Attendance</span>Attendance</th><td class="column-grade">82.35</td></tr></table>`);
+  const [a, b] = P.grades(d, course);
+  assert.equal(a.title, "Assignment 1"); assert.equal(a.value, "100.00"); assert.equal(a.activityType, "assignment");
+  assert.equal(b.title, "Attendance"); assert.equal(b.activityType, "attendance");
+});
 test("attendance keys survive reorder and distinguish same-day sessions", () => {
   const row = (date, status) => `<tr><td class="datecol">${date}</td><td class="desccol">Lab</td><td class="statuscol">${status}</td><td class="pointscol">2 / 2</td></tr>`;
   const table = rows => doc(`<table><tr><th class="datecol">Date</th><th class="statuscol">Status</th></tr>${rows}</table>`);
@@ -219,7 +225,7 @@ test("grade selection and private photo work from the database without a Moodle 
   const f = fixture(), original = globalThis.fetch, calls = [];
   try {
     await f.pair(); await ingest(f.env, await f.device(), f.payload([grade, attendance]));
-    const cards = [{ courseId: "42", page: 0, pages: 1, signature: "a".repeat(64), image: "/9j/AA==" }];
+    const cards = [{ courseId: "42", page: 0, pages: 1, signature: "a".repeat(64), format: 2, group: "", image: "/9j/AA==" }];
     validateGradeCards(cards); await saveGradeCards(f.env, 101, cards);
     assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM lms_grade_cards WHERE chat_id=202").get().n, 0);
     f.env.TELEGRAM_TOKEN = "test"; f.env.TG_API = "https://example.invalid";
@@ -232,6 +238,9 @@ test("grade selection and private photo work from the database without a Moodle 
     assert.equal(calls[0].reply_markup.inline_keyboard[0][0].callback_data, "lg:42:0");
     await gradePhoto(f.env, 101, "42");
     assert.ok(calls[1] instanceof FormData); assert.ok(calls[1].get("photo").size > 0);
+    f.sqlite.exec("UPDATE lms_grade_cards SET format=1");
+    await gradePhoto(f.env, 101, "42");
+    assert.match(calls.filter(c => typeof c.text === "string").at(-1).text, /Assignments &amp; practice|Assignments & practice/);
     const [c] = await academicCourses(f.env, 101); assert.match(attendanceLine(c), /100%/);
     assert.deepEqual(await academicCourses(f.env, 202), []);
   } finally { globalThis.fetch = original; f.sqlite.close(); }
