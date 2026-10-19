@@ -19,7 +19,7 @@ window.SCHEDULE = {
   group: "CS-2411",
   year: "2026–2027",
   period: "Осенний триместр",
-  updated: "2026-09-16",
+  updated: "2026-10-19",
 
   /* Границы триместра из академического календаря 3 курса.
      study — идут пары, exams — сессия, vacation — каникулы, дальше календарь кончается. */
@@ -43,8 +43,8 @@ window.SCHEDULE = {
 
   days: {
     mon: [
-      { start:"12:00", end:"12:50", subject:"Безопасность компьютерных сетей", type:"lecture",  code:"CNS53-EN-L153", room:"Актовый зал", building:"Главный корпус", teacher:"Абишев А." },
-      { start:"13:05", end:"13:55", subject:"Безопасность компьютерных сетей", type:"lecture",  code:"CNS53-EN-L153", room:"Актовый зал", building:"Главный корпус", teacher:"Абишев А." },
+      { start:"12:00", end:"12:50", subject:"Безопасность компьютерных сетей", type:"lecture",  code:"CNS53-EN-L153", room:"C1.3.370L", building:"Главный корпус", teacher:"Абишев А." },
+      { start:"13:05", end:"13:55", subject:"Безопасность компьютерных сетей", type:"lecture",  code:"CNS53-EN-L153", room:"C1.3.370L", building:"Главный корпус", teacher:"Абишев А." },
       { start:"14:00", end:"14:50", subject:"Этический хакинг",                type:"practice", code:"EH53-EN-P215",  online:true, teacher:"Хабиб С." },
       { start:"15:00", end:"15:50", subject:"Этический хакинг",                type:"practice", code:"EH53-EN-P215",  online:true, teacher:"Хабиб С." },
       { start:"18:00", end:"18:50", subject:"Безопасность компьютерных сетей", type:"practice", code:"CNS53-EN-P359", room:"C1.1.355P", building:"Главный корпус", teacher:"Сапаш С.А." },

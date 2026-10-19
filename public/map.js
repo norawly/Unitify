@@ -1,3 +1,87 @@
+/* Один поток Pointer Events для мыши и всех касаний. Начало нового жеста
+   берёт текущее положение карты: второй палец и его отпускание не дают скачка. */
+function attachMapGestures(svg, getBox, setBox, maxWidth){
+  "use strict";
+  var pointers=new Map(), gesture=null, moved=false;
+  function middle(points){
+    var a=points[0], b=points[1]||a;
+    return {x:(a.x+b.x)/2,y:(a.y+b.y)/2};
+  }
+  function distance(points){
+    return Math.max(1,Math.hypot(points[0].x-points[1].x,points[0].y-points[1].y));
+  }
+  function rebase(){
+    var points=Array.from(pointers.values()).slice(0,2), box=getBox();
+    if(!points.length || !box){ gesture=null; return; }
+    var r=svg.getBoundingClientRect(), center=middle(points);
+    gesture={box:box.slice(), center:center, rect:r, distance:points.length===2?distance(points):null,
+      anchor:{x:box[0]+(center.x-r.left)/r.width*box[2],
+              y:box[1]+(center.y-r.top)/r.height*box[3]}};
+  }
+  function zoom(box, anchor, center, width){
+    var r=svg.getBoundingClientRect(), w=Math.max(24,Math.min(maxWidth(),width));
+    var h=box[3]*w/box[2];
+    setBox([anchor.x-(center.x-r.left)/r.width*w,
+            anchor.y-(center.y-r.top)/r.height*h,w,h]);
+  }
+  svg.addEventListener("pointerdown",function(e){
+    if(!getBox() || (e.pointerType==="mouse" && e.button!==0)) return;
+    if(!pointers.size) moved=false;
+    pointers.set(e.pointerId,{x:e.clientX,y:e.clientY,target:e.target});
+    if(pointers.size>1) moved=true;
+    // Сохраняем исходную цель: обычное нажатие на кабинет по-прежнему выбирает его.
+    try { e.target.setPointerCapture(e.pointerId); } catch(ignore){}
+    rebase();
+  });
+  svg.addEventListener("pointermove",function(e){
+    var point=pointers.get(e.pointerId);
+    if(!point || !gesture) return;
+    point.x=e.clientX; point.y=e.clientY;
+    var points=Array.from(pointers.values()).slice(0,2), center=middle(points), box=gesture.box;
+    if(points.length===2){
+      moved=true;
+      zoom(box,gesture.anchor,center,box[2]*gesture.distance/distance(points));
+    } else {
+      var dx=center.x-gesture.center.x, dy=center.y-gesture.center.y;
+      if(Math.hypot(dx,dy)>5) moved=true;
+      setBox([box[0]-dx/gesture.rect.width*box[2],
+              box[1]-dy/gesture.rect.height*box[3],box[2],box[3]]);
+    }
+  });
+  function end(e){
+    var point=pointers.get(e.pointerId);
+    if(!point) return;
+    pointers.delete(e.pointerId);
+    rebase();
+    try {
+      if(point.target.hasPointerCapture(e.pointerId)) point.target.releasePointerCapture(e.pointerId);
+    } catch(ignore){}
+  }
+  svg.addEventListener("pointerup",end);
+  svg.addEventListener("pointercancel",end);
+  svg.addEventListener("lostpointercapture",end);
+  svg.addEventListener("click",function(e){
+    if(moved){ e.preventDefault(); e.stopPropagation(); }
+  },true);
+  svg.addEventListener("wheel",function(e){
+    e.preventDefault();
+    var box=getBox();
+    if(!box || pointers.size || !e.deltaY) return;
+    var r=svg.getBoundingClientRect(), center={x:e.clientX,y:e.clientY};
+    var units=e.deltaMode===1?16:e.deltaMode===2?r.height:1;
+    var k=Math.exp(Math.max(-1,Math.min(1,e.deltaY*units*(e.ctrlKey?0.01:0.002))));
+    zoom(box,{x:box[0]+(center.x-r.left)/r.width*box[2],
+              y:box[1]+(center.y-r.top)/r.height*box[3]},center,box[2]*k);
+  },{passive:false});
+  return function reset(){
+    var active=Array.from(pointers.entries());
+    pointers.clear(); gesture=null; moved=false;
+    active.forEach(function(entry){
+      try { entry[1].target.releasePointerCapture(entry[0]); } catch(ignore){}
+    });
+  };
+}
+
 /* Карта корпуса: планы этажей из aitumap. Ищет кабинет по номеру и показывает,
    где он находится — мини-картой в карточке пары и на весь экран. */
 window.CampusMap = (function(){
@@ -191,7 +275,7 @@ function overview(room){
 }
 
 /* ---------- карта на весь экран ---------- */
-var view=null, state={floor:1, sel:null, vb:null};
+var view=null, resetGestures=null, state={floor:1, sel:null, vb:null};
 
 function build(){
   if(view) return view;
@@ -220,7 +304,7 @@ function build(){
   document.addEventListener("keydown",function(e){
     if(e.key==="Escape" && view && view.classList.contains("open")) close();
   });
-  panzoom(view.querySelector("#mvSvg"));
+  resetGestures=panzoom(view.querySelector("#mvSvg"));
   window.addEventListener("resize",function(){
     if(view.classList.contains("open")) render(true);
   });
@@ -244,6 +328,7 @@ function fitAspect(box){
   return [x,y,w,h];
 }
 function render(fit){
+  if(fit && resetGestures) resetGestures();
   var svg=view.querySelector("#mvSvg");
   var f=DATA.floors.filter(function(x){ return x.level===state.floor; })[0];
   svg.innerHTML="";
@@ -294,46 +379,9 @@ function pick(room,floor,zoom){
   if(!zoom){ info(); }
 }
 function panzoom(svg){
-  svg.addEventListener("wheel",function(e){
-    e.preventDefault();
-    var r=svg.getBoundingClientRect();
-    var mx=state.vb[0]+(e.clientX-r.left)/r.width*state.vb[2];
-    var my=state.vb[1]+(e.clientY-r.top)/r.height*state.vb[3];
-    var k=e.deltaY>0?1.15:1/1.15;
-    var w=Math.max(24, Math.min(DATA.viewBox[2]*1.6, state.vb[2]*k));
-    var sc=w/state.vb[2];
-    state.vb=[mx-(mx-state.vb[0])*sc, my-(my-state.vb[1])*sc, w, state.vb[3]*sc];
-    apply();
-  },{passive:false});
-
-  var drag=null, pinch=null;
-  svg.addEventListener("pointerdown",function(e){
-    drag={x:e.clientX,y:e.clientY,vb:state.vb.slice()};
-    svg.setPointerCapture(e.pointerId);
-  });
-  svg.addEventListener("pointermove",function(e){
-    if(!drag) return;
-    var r=svg.getBoundingClientRect();
-    state.vb=[drag.vb[0]-(e.clientX-drag.x)/r.width*drag.vb[2],
-              drag.vb[1]-(e.clientY-drag.y)/r.height*drag.vb[3], drag.vb[2], drag.vb[3]];
-    apply();
-  });
-  svg.addEventListener("pointerup",function(){ drag=null; });
-  svg.addEventListener("pointercancel",function(){ drag=null; });
-
-  svg.addEventListener("touchmove",function(e){
-    if(e.touches.length!==2) return;
-    e.preventDefault();
-    var a=e.touches[0], b=e.touches[1];
-    var d=Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY);
-    if(!pinch){ pinch={d:d, vb:state.vb.slice()}; return; }
-    var k=pinch.d/d;
-    var w=Math.max(24, Math.min(DATA.viewBox[2]*1.6, pinch.vb[2]*k));
-    var cx=pinch.vb[0]+pinch.vb[2]/2, cy=pinch.vb[1]+pinch.vb[3]/2;
-    var h=pinch.vb[3]*(w/pinch.vb[2]);
-    state.vb=[cx-w/2, cy-h/2, w, h]; apply();
-  },{passive:false});
-  svg.addEventListener("touchend",function(){ pinch=null; drag=null; });
+  return attachMapGestures(svg,function(){ return state.vb; },function(box){
+    state.vb=box; apply();
+  },function(){ return Math.max(DATA.viewBox[2],fitAspect(DATA.viewBox)[2])*1.6; });
 }
 function open(roomQuery){
   load().then(function(){
@@ -355,6 +403,7 @@ function open(roomQuery){
 }
 function close(){
   if(!view) return;
+  if(resetGestures) resetGestures();
   view.classList.remove("open");
   document.body.classList.remove("locked");
 }
