@@ -2,6 +2,8 @@
    Ссылка приватная — лежит только в базе бота и никуда не уходит. */
 
 export const CAL_HOST = "lms.astanait.edu.kz";
+import { applySubmissions } from "./lms-extension.js";
+export const completed = d => !!d.done_at || d.submission_state === "submitted";
 
 export function validCalUrl(text) {
   let u;
@@ -98,6 +100,7 @@ export async function syncUser(env, user) {
     writes.push(env.DB.prepare("DELETE FROM deadlines WHERE chat_id = ? AND uid = ?").bind(user.chat_id, uid));
   writes.push(env.DB.prepare("UPDATE users SET cal_hash = ? WHERE chat_id = ?").bind(got.hash, user.chat_id));
   await env.DB.batch(writes);
+  await applySubmissions(env, user.chat_id);
 
   return { ok: true, count: fresh.length, added, moved, events: got.events };
 }

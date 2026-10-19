@@ -8,6 +8,7 @@ import { tg, webhookSecret } from "./tg.js";
 import { loadSchedule, loader, sendClassCard, post, dayPhoto, menuKeyboard } from "./bot.js";
 import { t as dict, durIn, SUBJECT_EN } from "./i18n.js";
 import { privateChatIds, retireOtherUsers } from "./access.js";
+import { notifyChanges } from "./lms-extension.js";
 
 const BUDGET = 40;            // бесплатный план — до 50 запросов наружу за запуск
 const DUE_LEADS = [12 * 60, 6 * 60, 3 * 60, 2 * 60, 60, 30];
@@ -48,6 +49,8 @@ export async function runCron(env, source = "cron") {
       budget -= await M.wipe(env, u.chat_id);
       continue;
     }
+    await notifyChanges(env, u).catch(() => console.log("lms notification postponed"));
+    budget -= 2;
 
     /* 08:00 — доброе утро: расписание дня и то, что сдавать в ближайшие два дня */
     if (on && at(now, MORNING) && await db.markSent(env, u.chat_id, `${now.iso}:morning`)) {
@@ -113,7 +116,7 @@ async function morning(env, u, S, today, now) {
 
   if (!u.cal_url) return;
   const soon = (await moodle.visibleUpcoming(env, u.chat_id, S, Date.now(), 20, off))
-    .filter(d => !d.done_at && d.due < Date.now() + 2 * 86400000);
+    .filter(d => !moodle.completed(d) && d.due < Date.now() + 2 * 86400000);
   await post(env, u.chat_id, { kind: "due", markup: menuKeyboard(env, u), text: soon.length
     ? X.deadlinesText(soon, Date.now(), lang, off, L.due_soon_head)
     : L.due_none_soon });
@@ -144,7 +147,7 @@ async function checkCalendar(env, u, now) {
     for (const [events, key, head] of [[r.added || [], "new", L.new_deadline], [r.moved || [], "mv", L.moved_deadline]])
       for (const event of soon(events)) {
         const d = await moodle.oneDeadline(env, u.chat_id, event.uid);
-        if (d && !d.done_at && await db.markSent(env, u.chat_id, `dl:${key}:${d.uid}:${d.due}`))
+        if (d && !moodle.completed(d) && await db.markSent(env, u.chat_id, `dl:${key}:${d.uid}:${d.due}`))
           await post(env, u.chat_id, { kind: "deadline", text: deadlineText(head, d, lang, off),
             markup: doneMarkup(d, L) });
       }
@@ -159,7 +162,7 @@ async function checkCalendar(env, u, now) {
 
   /* за 12/6/3/2/1 час и 30 минут до сдачи; ручная отметка выключает напоминания */
   for (const d of await moodle.visibleUpcoming(env, u.chat_id, S, Date.now(), 30, off)) {
-    if (d.done_at) continue;
+    if (moodle.completed(d)) continue;
     const left = Math.round((d.due - Date.now()) / 60000);
     for (const lead of DUE_LEADS)
       if (left > lead - 5 && left <= lead && await db.markSent(env, u.chat_id, `dl:${lead}:${d.uid}:${d.due}`))
@@ -206,7 +209,7 @@ function compare(S, events, now, off, lang) {
 export async function ensureWebhook(env, force = false) {
   const secret = await webhookSecret(env.TELEGRAM_TOKEN);
   const url = env.PUBLIC_URL + "/tg/webhook";
-  const want = `${url}|${secret.slice(0, 16)}|v5`;
+  const want = `${url}|${secret.slice(0, 16)}|v6`;
   const prev = await db.getMeta(env, "webhook");
   if (!force && prev === want) return { ok: true, cached: true };
 
@@ -228,6 +231,10 @@ export async function ensureWebhook(env, force = false) {
     { command: "next", description: "Следующая пара и кабинет на карте" },
     { command: "today", description: "Весь сегодняшний день одной картинкой" },
     { command: "deadlines", description: "Дедлайны из Moodle" },
+    { command: "extension", description: "Подключить расширение Moodle Reader" },
+    { command: "grades", description: "Оценки из расширения Moodle" },
+    { command: "attendance", description: "Посещаемость из расширения Moodle" },
+    { command: "homework", description: "Статусы сдачи домашних работ" },
     { command: "menu", description: "Вернуть кнопки меню" },
     { command: "settings", description: "Напоминания, язык, расписание" },
     { command: "start", description: "Вход по баркоду" },

@@ -5,6 +5,7 @@ import { runCron, ensureWebhook } from "./cron.js";
 import { tg, webhookSecret } from "./tg.js";
 import * as db from "./db.js";
 import { isPrivateUpdate, privateChatIds } from "./access.js";
+import { handleLms } from "./lms-extension.js";
 
 export { Ticker } from "./ticker.js";
 
@@ -37,6 +38,7 @@ async function healTicker(env) {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    if (url.pathname.startsWith("/api/lms/")) return handleLms(request, env);
 
     /* подключить webhook и будильник прямо сейчас; ответ Telegram — без токена */
     if (url.pathname === "/tg/setup") {

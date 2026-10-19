@@ -6,7 +6,7 @@ import * as T from "./sched.js";
 import * as X from "./text.js";
 import { tg } from "./tg.js";
 
-const LIMIT = { class: 2, deadline: 2, day: 1, due: 1, info: 1, menu: 1 };
+const LIMIT = { class: 2, deadline: 2, lms: 2, day: 1, due: 1, info: 1, menu: 1 };
 const OPTS = { parse_mode: "HTML", link_preview_options: { is_disabled: true } };
 
 const rows = (e, chatId, kind) =>

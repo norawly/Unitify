@@ -8,6 +8,7 @@ import * as moodle from "./moodle.js";
 import { tg } from "./tg.js";
 import { isPrivateUpdate } from "./access.js";
 import { t as dict, subject as subjectName, durIn } from "./i18n.js";
+import { createPairCode, revokeDevice, recordsText } from "./lms-extension.js";
 
 /* за сколько напоминать, решает расписание (worker/sched.js: leadOf) — в настройках только вкл/выкл */
 const RATE = 7;                                // обращений в минуту с одного аккаунта
@@ -145,6 +146,10 @@ async function onText(c, text) {
   if (BARCODE.test(text)) return byBarcode(c, text);
   if (!c.user) return stranger(c);
   if (c.user.status === "pending") return pendingNotice(c);
+
+  if (cmd === "/extension") return extensionScreen(c, true);
+  if (["/grades", "/attendance", "/homework"].includes(cmd))
+    return send(c.env, c.chatId, await recordsText(c.env, c.chatId, { "/grades": "grade", "/attendance": "attendance", "/homework": "assignment" }[cmd], c.lang));
 
   const cal = moodle.validCalUrl(text);
   if (cal) return saveCalendar(c, cal);
@@ -287,6 +292,7 @@ async function onCallback(c, cb) {
   else if (kind === "d") await showDay(c, a, true);
   else if (kind === "w") await showWeek(c, a, true);
   else if (kind === "s") toast = await settings(c, a, true);
+  else if (kind === "lx") await extensionScreen(c, a === "pair", true);
   else if (kind === "dl") await deadlines(c, a, true);
   else if (kind === "c" && /^\d{4}-\d{2}-\d{2}$/.test(a) && /^\d+$/.test(b)) {
     const S = await loadSchedule(c.env, c.user.person);
@@ -430,6 +436,8 @@ async function deadlines(c, _which, edit) {
 async function settings(c, what, edit) {
   const u = c.user;
   const L0 = dict(c.lang);
+  if (what === "extension") { await extensionScreen(c, false, edit); return ""; }
+  if (what === "extoff") { await revokeDevice(c.env, c.chatId); await show(c, c.lang === "en" ? "Extension disconnected." : "Расширение отключено. Новая передача данных запрещена.", null, edit); return ""; }
   if (what === "today") { await todayCard(c); return ""; }
   if (what === "cal") {
     if (!u.cal_url) { await show(c, L0.cal_how, null, edit); return ""; }
@@ -471,7 +479,22 @@ async function settings(c, what, edit) {
     [{ text: "🔔 " + (u.lead_min ? L.s_remind_on : L.s_remind_off), callback_data: "s:lead" }],
     [{ text: L.btn_today, callback_data: "s:today" }, { text: L.btn_preview, callback_data: "t" }],
     [{ text: L.btn_moodle, callback_data: "s:cal" }],
+    [{ text: "💻 Moodle Reader", callback_data: "s:extension" }],
     [{ text: L.btn_lang, callback_data: "s:lang" }, { text: L.btn_barcode, callback_data: "s:person" }],
   ] }, edit);
   return toast;
+}
+
+async function extensionScreen(c, newCode, edit = false) {
+  const en = c.lang === "en";
+  const device = await c.env.DB.prepare("SELECT account,last_sync FROM lms_devices WHERE chat_id=?").bind(c.chatId).first();
+  const code = newCode ? await createPairCode(c.env, c.chatId) : null;
+  const base = c.env.PUBLIC_URL;
+  const text = en
+    ? `<b>💻 Unitify · Moodle Reader</b>\n\nRead-only homework, grades and attendance. Your existing Moodle login stays in the browser. Passwords, cookies and homework files are not uploaded.\n\n1. Download and unzip the extension on your computer.\n2. Open chrome://extensions → Developer mode → Load unpacked → choose its folder.\n3. Open the extension and enter the code below. Open Moodle to sync.\n\n${code ? `One-time code: <code>${code}</code>\nValid for 10 minutes.` : device ? "Connected. /grades · /attendance · /homework" : "Generate a pairing code below."}\n\nUpdates work while Chrome and Moodle are open. First sync saves history without a notification flood.`
+    : `<b>💻 Unitify · Moodle Reader</b>\n\nДомашки, оценки и attendance — только чтение. Используется вход в Moodle в браузере. Пароли, cookies и файлы работ не передаются.\n\n1. Скачайте ZIP и распакуйте на компьютере.\n2. Откройте chrome://extensions → Режим разработчика → Загрузить распакованное → выберите папку расширения.\n3. Откройте расширение, введите код и зайдите в Moodle.\n\n${code ? `Одноразовый код: <code>${code}</code>\nДействует 10 минут.` : device ? "Подключено. /grades · /attendance · /homework" : "Получите код кнопкой ниже."}\n\nОбновление работает, пока открыты Chrome и Moodle. Первый сбор сохраняет историю без потока уведомлений.`;
+  const rows = [[{ text: en ? "Download ZIP" : "Скачать ZIP", url: base + "/downloads/unitify-moodle-reader.zip" }],
+    [{ text: en ? "New pairing code" : "Новый код подключения", callback_data: "lx:pair" }]];
+  if (device) rows.push([{ text: en ? "Disconnect extension" : "Отключить расширение", callback_data: "s:extoff" }]);
+  return show(c, text, { inline_keyboard: rows }, edit);
 }

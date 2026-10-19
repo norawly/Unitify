@@ -3,13 +3,13 @@
   "main": "worker/index.js",
   "compatibility_date": "2026-09-02",
   // перед деплоем: страницы людей + json для бота
-  "build": { "command": "python3 tools/build-pages.py && node tools/export-json.mjs && node tools/render-room-maps.mjs && node tools/render-day-cards.mjs" },
+  "build": { "command": "python3 tools/build-pages.py && node tools/export-json.mjs && node tools/render-room-maps.mjs && node tools/render-day-cards.mjs && node tools/package-extension.mjs" },
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "404-page",
-    "run_worker_first": ["/tg/*", "/__scheduled"]
+    "run_worker_first": ["/tg/*", "/__scheduled", "/api/lms/*"]
   },
   "routes": [
     { "pattern": "s.zhengisbay.com", "custom_domain": true }

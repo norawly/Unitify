@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unitify</title><link rel="stylesheet" href="popup.css"></head>
+<body><main>
+  <header><div class="brand"><img src="icons/icon-192.png" alt="" width="28" height="28"><strong>Unitify</strong></div><span class="badge">Только чтение</span></header>
+  <section class="control"><div><strong id="mode">Сбор включён</strong><small id="modeHint">Проверка через открытый Moodle</small></div><label class="switch" title="Приостановить или продолжить сбор"><input id="enabled" type="checkbox" role="switch" aria-label="Сбор и синхронизация включены" checked><span></span></label></section>
+  <section class="sync-state"><span class="dot" id="dot"></span><div><p id="status">Откройте Moodle для первой проверки.</p><small id="timestamps">Данные ещё не загружены</small></div><button class="icon-button" id="sync" title="Обновить данные" aria-label="Обновить данные">↻</button></section>
+  <section id="pairing"><form id="pair"><label for="code">Telegram · код из команды /extension</label><div class="inline"><input id="code" maxlength="9" placeholder="ABCD-EFGH" autocomplete="off" required><button>Связать</button></div></form></section>
+  <p id="notice" role="status" hidden></p>
+  <nav aria-label="Учебные данные"><button data-view="assignment" class="active">Домашки</button><button data-view="grade">Оценки</button><button data-view="attendance">Attendance</button><button data-view="history">История</button></nav>
+  <div class="filters"><input id="search" placeholder="Найти предмет или запись" aria-label="Поиск"><span id="count"></span></div>
+  <div id="content" tabindex="0" aria-label="Список учебных записей"></div>
+  <footer><a href="https://lms.astanait.edu.kz/my/" target="_blank" rel="noreferrer">Открыть Moodle ↗</a><button class="link" id="preferences" aria-expanded="false">Настройки</button></footer>
+  <section id="options" hidden><p id="connection"></p><p>Cookies и пароль остаются в браузере. Без открытого Moodle обновления недоступны. Во время теста или редактирования ответа сбор приостанавливается.</p><p>Время изменения — момент обнаружения. Первая проверка сохраняет историю без уведомлений.</p><button class="quiet" id="diagnostics">Скачать диагностику</button><button class="quiet" id="unpair" hidden>Отключить Telegram</button><button class="quiet" id="clear">Очистить локальные данные</button></section>
+</main><script type="module" src="popup.js"></script></body></html>
