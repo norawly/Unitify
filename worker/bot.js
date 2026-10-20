@@ -57,8 +57,18 @@ export const menuKeyboard = (e, user) => {
     ],
     resize_keyboard: true,
     is_persistent: true,
+    one_time_keyboard: false,
   };
 };
+
+export const menuText = user => langOf(user) === "en"
+  ? "📋 <b>Unitify</b>\nChoose an option below."
+  : "📋 <b>Unitify</b>\nВыберите раздел кнопками внизу.";
+
+async function ensureMenu(e, chatId, user) {
+  if (!await M.newest(e, chatId, "menu"))
+    await post(e, chatId, { kind: "menu", text: menuText(user), markup: menuKeyboard(e, user) });
+}
 
 /* карточка пары: картинка карты, сколько осталось, время, предмет и кабинет */
 export async function sendClassCard(e, chatId, user, g, iso, state) {
@@ -141,6 +151,10 @@ export async function handleUpdate(e, update) {
   }
 
   const c = { env: e, chatId: chat.id, from, user, now: T.localNow(e), lang: langOf(user) };
+  // Repair a legacy/deleted carrier once, including when the user opens an old
+  // inline button. Do not send an extra message on every navigation.
+  if (user && user.status !== "pending" && !/^\/(?:start|menu)(?:@\w+)?(?:\s|$)/i.test(msg?.text || ""))
+    await ensureMenu(e, chat.id, user);
   if (cb) return onCallback(c, cb);
   if (!msg.text) return;
   await onText(c, msg.text.trim());

@@ -98,7 +98,7 @@ test("settings, old callbacks, barcode and calendar inputs cannot mutate a demo 
     assert.equal(JSON.stringify(f.sql.prepare("SELECT * FROM users ORDER BY chat_id").all()),before);
     assert.equal(f.sql.prepare("SELECT done_at FROM deadlines WHERE chat_id=101").get().done_at,null);
     assert.equal(f.sql.prepare("SELECT COUNT(*) n FROM lms_pair_codes").get().n,0);
-    assert.ok(f.calls.filter(c=>["sendMessage","editMessageText"].includes(c.method)).every(c=>/Read-only demonstration/.test(c.body.text)));
+    assert.ok(f.calls.filter(c=>["sendMessage","editMessageText"].includes(c.method) && !c.body.reply_markup?.keyboard).every(c=>/Read-only demonstration/.test(c.body.text)));
     assert.ok(f.calls.every(c=>!JSON.stringify(c.body).includes("SYNTHETIC")));
     await assert.rejects(updateUser(f.env,303,{person:"nurbek"}),/read-only/);
     assert.throws(()=>setDone(f.env,303,1,true),/read-only/);
@@ -117,6 +117,9 @@ test("all read screens, grade photos and page navigation work for both viewers w
       assert.ok(messages.some(c=>String(c.body.text).includes("📍 Attendance")));
       assert.ok(messages.some(c=>String(c.body.text).includes("Assignment 1")));
       assert.ok(!messages.some(c=>JSON.stringify(c.body).includes("Other private course")));
+      assert.equal(f.sql.prepare("SELECT COUNT(*) n FROM msgs WHERE chat_id=? AND kind='menu'").get(id).n,1);
+      const menuId=f.sql.prepare("SELECT message_id FROM msgs WHERE chat_id=? AND kind='menu'").get(id).message_id;
+      assert.ok(!messages.some(c=>c.method==="deleteMessage" && c.body.message_id===menuId));
     }
     assert.equal(f.sql.prepare("SELECT COUNT(*) n FROM owners").get().n,2);
   }finally{f.close();}
@@ -160,7 +163,7 @@ test("deadline fan-out fetches Moodle once and gives no completion buttons to vi
     const setMeta=(key,value)=>f.sql.prepare("INSERT INTO meta VALUES (?,?)").run(key,value);
     setMeta("private_access_cleanup_v1",JSON.stringify({complete:true}));
     setMeta("webhook",`${f.env.PUBLIC_URL}/tg/webhook|${(await webhookSecret("test")).slice(0,16)}|v6`);
-    for(const id of [101,202,303,404]) f.sql.prepare("INSERT INTO sent VALUES (?,'reply-keyboard-academics-v2',?)").run(id,Date.now());
+    for(const id of [101,202,303,404]) f.sql.prepare("INSERT INTO sent VALUES (?,'reply-keyboard-persistent-v3',?)").run(id,Date.now());
     const due=new Date(Date.now()+30*60000).toISOString().replace(/[-:]/g,"").replace(/\.\d+Z$/,"Z");
     const telegram=globalThis.fetch;let polls=0;
     globalThis.fetch=async(url,options)=>String(url).startsWith("https://lms.astanait.edu.kz/")

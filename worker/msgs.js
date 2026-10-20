@@ -7,8 +7,10 @@ import * as X from "./text.js";
 import { tg } from "./tg.js";
 import { attendanceSnapshot, classAttendance } from "./attendance.js";
 
-const LIMIT = { class: 2, deadline: 2, lms: 2, screen: 1, day: 1, due: 1 };
-const screenKinds = new Set(["screen", "academic", "info", "menu"]);
+const LIMIT = { class: 2, deadline: 2, lms: 2, screen: 1, menu: 1, day: 1, due: 1 };
+// The reply keyboard belongs to its carrier message. Keep that small menu
+// independently: deleting it while switching screens can hide the keyboard.
+const screenKinds = new Set(["screen", "academic", "info"]);
 const OPTS = { parse_mode: "HTML", link_preview_options: { is_disabled: true } };
 
 const rows = (e, chatId, kind) =>
@@ -32,9 +34,9 @@ export async function dropKind(e, chatId, kind) {
   for (const row of await rows(e, chatId, kind)) await drop(e, chatId, row.message_id).catch(() => {});
 }
 
-/* ночная уборка: в чате не остаётся ничего */
+/* Ночная уборка оставляет только одно постоянное сообщение с клавиатурой. */
 export async function wipe(e, chatId) {
-  const list = (await e.DB.prepare("SELECT message_id FROM msgs WHERE chat_id = ?").bind(chatId).all()).results;
+  const list = (await e.DB.prepare("SELECT message_id FROM msgs WHERE chat_id = ? AND kind != 'menu'").bind(chatId).all()).results;
   let removed = 0;
   for (const row of list) if (await drop(e, chatId, row.message_id).catch(() => false)) removed++;
   return removed;
@@ -50,7 +52,7 @@ export async function drop(e, chatId, id) {
 }
 
 async function pruneScreens(e, chatId, current) {
-  const list = (await e.DB.prepare("SELECT message_id FROM msgs WHERE chat_id=? AND kind IN ('screen','academic','info','menu') AND message_id<? ORDER BY message_id DESC").bind(chatId, current).all()).results;
+  const list = (await e.DB.prepare("SELECT message_id FROM msgs WHERE chat_id=? AND kind IN ('screen','academic','info') AND message_id<? ORDER BY message_id DESC").bind(chatId, current).all()).results;
   for (const row of list) if (!await drop(e, chatId, row.message_id).catch(() => false)) {
     // Telegram may refuse deletion of an old message. At least retire its buttons;
     // keep the ID so a failed deletion is never mistaken for a successful one.

@@ -280,3 +280,30 @@ test("a successful unchanged attendance read updates evidence without changing t
     assert.equal(f.sqlite.prepare("SELECT count(*) n FROM lms_events").get().n, 0);
   } finally { f.sqlite.close(); }
 });
+
+test("reply keyboard carrier survives text, image, callback screens and nightly cleanup", async () => {
+  const f=fixture(), original=globalThis.fetch, deleted=[];let next=100;
+  f.env.TELEGRAM_TOKEN="test";f.env.TG_API="https://example.invalid";
+  globalThis.fetch=async(url,options)=>{
+    const body=options.body instanceof FormData?Object.fromEntries(options.body.entries()):JSON.parse(options.body);
+    if(String(url).endsWith("/deleteMessage")) deleted.push(body.message_id);
+    return Response.json({ok:true,result:{message_id:++next}});
+  };
+  try {
+    const r=await M.post(f.env,101,{kind:"menu",text:"Menu",markup:{keyboard:[[{text:"Today"}]],is_persistent:true}});
+    const anchor=r.result.message_id;
+    await M.post(f.env,101,{kind:"info",text:"Settings"});
+    await M.post(f.env,101,{kind:"academic",text:"Subjects",markup:{inline_keyboard:[]}});
+    await M.postImage(f.env,101,{kind:"academic",bytes:new Uint8Array([255,216,255]),text:"Grades"});
+    await M.post(f.env,101,{kind:"info",text:"Deadlines"});
+    const screen=f.sqlite.prepare("SELECT message_id FROM msgs WHERE chat_id=101 AND kind='screen'").get();
+    await M.edit(f.env,101,screen.message_id,{text:"Updated",kind:"info"});
+    assert.ok(!deleted.includes(anchor));
+    await M.wipe(f.env,101);
+    assert.deepEqual(f.sqlite.prepare("SELECT message_id,kind FROM msgs WHERE chat_id=101").all().map(x=>({...x})),[{message_id:anchor,kind:"menu"}]);
+    const replacement=await M.post(f.env,101,{kind:"menu",text:"Menu refreshed",markup:{keyboard:[[{text:"Today"}]],is_persistent:true}});
+    assert.ok(deleted.includes(anchor));
+    assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM msgs WHERE chat_id=101 AND kind='menu'").get().n,1);
+    assert.equal(f.sqlite.prepare("SELECT message_id FROM msgs WHERE chat_id=101 AND kind='menu'").get().message_id,replacement.result.message_id);
+  }finally{globalThis.fetch=original;f.sqlite.close();}
+});

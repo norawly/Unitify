@@ -5,7 +5,7 @@ import * as db from "./db.js";
 import * as M from "./msgs.js";
 import * as moodle from "./moodle.js";
 import { tg, webhookSecret } from "./tg.js";
-import { loadSchedule, loader, sendClassCard, post, dayPhoto, menuKeyboard, pinnedSettingsText } from "./bot.js";
+import { loadSchedule, loader, sendClassCard, post, dayPhoto, menuKeyboard, menuText } from "./bot.js";
 import { t as dict, durIn, SUBJECT_EN } from "./i18n.js";
 import { privateChatIds, retireOtherUsers, demoSource, dataChatId } from "./access.js";
 import { notifyChanges } from "./lms-extension.js";
@@ -30,14 +30,14 @@ export async function runCron(env, source = "cron") {
   for (const u of active) {
     if (budget <= 0) break;
     // У Telegram старая reply-клавиатура не меняется от одной правки кода.
-    // Один раз отправляем новую (без Timetable) и убираем прежнее меню.
-    if (await db.markSent(env, u.chat_id, "reply-keyboard-academics-v2")) {
+    // Восстанавливаем клавиатуру в отдельном, не удаляемом при навигации сообщении.
+    if (await db.markSent(env, u.chat_id, "reply-keyboard-persistent-v3")) {
       const lang = u.lang === "en" ? "en" : "ru";
       const r = await post(env, u.chat_id, { kind: "menu",
-        text: demoSource(env, u.chat_id) ? pinnedSettingsText(lang) : lang === "en" ? "Menu updated." : "Кнопки меню обновлены.",
+        text: menuText(u),
         markup: menuKeyboard(env, u) });
       if (!r.ok && r.error_code !== 403) await env.DB.prepare("DELETE FROM sent WHERE chat_id = ? AND key = ?")
-        .bind(u.chat_id, "reply-keyboard-academics-v2").run();
+        .bind(u.chat_id, "reply-keyboard-persistent-v3").run();
       else if (r.ok) {
         await M.clearClassButtons(env, u.chat_id);
         if (demoSource(env, u.chat_id)) await tg(env, "setChatMenuButton", { chat_id: u.chat_id,
