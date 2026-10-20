@@ -73,7 +73,7 @@
       if (e.message !== "Сбор остановлен") errors.push({ scope, message: String(e.message).slice(0, 180) });
     }
     async function collect(scope, job) {
-      try { groups.push({ scope, records: await job() }); }
+      try { const records = await job(); groups.push({ scope, records, checkedAt: Date.now() }); }
       catch (e) { error(scope, e); }
       await report();
     }
@@ -132,7 +132,7 @@
           }
         } catch (e) { error(`${course.id}:course`, e); if (known) Object.assign(entry, known); }
         const results = await Promise.all([...assignments.values()]);
-        if (results.some(Boolean)) groups.push({ scope: `${course.id}:assignment`, records: results.filter(Boolean) });
+        if (results.some(Boolean)) groups.push({ scope: `${course.id}:assignment`, records: results.filter(Boolean), checkedAt: Date.now() });
         await Promise.all([gradeJob, ...attendanceJobs.values()]);
         for (const group of groups) for (const record of group.records) if (record.courseId === course.id) record.course = course.name;
         await report();

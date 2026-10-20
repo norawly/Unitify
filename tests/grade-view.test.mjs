@@ -46,7 +46,8 @@ test("private canvas cards use the grouped view and their cache key includes lay
   runInNewContext(source, context);
   const records = [row(1, "Calculated gradeRegister Midterm", "95.00"), row(2, "AttendanceAttendance", "82.35"), row(3, "AssignmentFinal Exam"), row(4, "AssignmentAssignment 1", "100.00 Grade analysis"), row(5, "AssignmentPractice CS-2410")];
   const [card] = await context.UnitifyGradeCards.render({ id: "42", name: "Synthetic course" }, records, null, "CS-2411");
-  assert.equal(card.format, 2); assert.equal(card.group, "CS-2411");
+  assert.equal(card.format, 3); assert.equal(card.group, "CS-2411");
+  assert.ok(drawings.includes("Page 1/1"));
   assert.ok(drawings.includes("REGISTER / TOTALS")); assert.ok(drawings.includes("EXAMS & CHECKPOINTS"));
   assert.ok(drawings.includes("82.35%")); assert.ok(drawings.includes("Assignment 1"));
   assert.ok(!drawings.some(s => /Grade analysis|AssignmentAssignment|Practice CS-2410/.test(s)));

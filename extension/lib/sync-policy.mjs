@@ -1,5 +1,5 @@
 // Data-only policy. No remote selectors, scripts or executable configuration.
-export const RELEASE = "0.3.1";
+export const RELEASE = "0.3.2";
 export const DEFAULT_POLICY = { intervalMinutes: 30, discoveryHours: 6, spacingMs: 900 };
 const MIN = 60000;
 const clamp = (n, min, max, fallback) => Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;

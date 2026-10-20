@@ -2,7 +2,7 @@ import { normalizeRecord, changes } from "../extension/lib/model.mjs";
 import { privateChatIds } from "./access.js";
 import * as M from "./msgs.js";
 import { esc } from "./text.js";
-import { syncContext } from "./lms-policy.js";
+import { syncContext, linkedSchedule } from "./lms-policy.js";
 
 const hash = async text => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))].map(v => v.toString(16).padStart(2, "0")).join("");
 const random = () => [...crypto.getRandomValues(new Uint8Array(32))].map(v => v.toString(16).padStart(2, "0")).join("");
@@ -85,6 +85,10 @@ export async function handleLms(request, env) {
     const cards = validateGradeCards(payload?.gradeCards);
     const result = await ingest(env, device, payload);
     if (cards.length) await saveGradeCards(env, device.chat_id, cards);
+    if (env.TELEGRAM_TOKEN && payload.groups.some(g => g.scope.includes(":attendance:"))) {
+      const S = await linkedSchedule(env, device.chat_id);
+      if (S) await M.tidy(env, device.chat_id, async () => S).catch(() => console.log("attendance card refresh postponed"));
+    }
     return reply({ ok: true, ...result, syncContext: await syncContext(env, device.chat_id) });
   } catch (e) {
     // Never log request bodies, tokens or private academic snapshots.
@@ -100,7 +104,7 @@ export function validateGradeCards(cards = []) {
   const unique = new Set(); let length = 0;
   for (const c of cards) {
     if (!c || !/^\d+$/.test(c.courseId) || !Number.isInteger(c.page) || !Number.isInteger(c.pages) || c.pages < 1 || c.pages > 10 || c.page < 0 || c.page >= c.pages ||
-      ![1, 2].includes(c.format ?? 1) || (c.group !== undefined && (typeof c.group !== "string" || c.group.length > 40)) ||
+      ![1, 2, 3].includes(c.format ?? 1) || (c.group !== undefined && (typeof c.group !== "string" || c.group.length > 40)) ||
       !/^[a-f0-9]{64}$/.test(c.signature) || typeof c.image !== "string" || c.image.length > 300000 || !/^\/9j\/[A-Za-z0-9+/]*={0,2}$/.test(c.image)) throw new InputError("Неверная карточка оценок.");
     const key = `${c.courseId}:${c.page}`;
     if (unique.has(key)) throw new InputError("Повтор карточки.");
@@ -139,7 +143,8 @@ export async function ingest(env, device, payload) {
         (cmid && record.id.split(":")[1] !== cmid)) throw new InputError("Запись не соответствует разделу.");
       unique.add(record.id); records.push(record);
     }
-    groups.push({ scope: group.scope, records });
+    const checkedAt = Number.isSafeInteger(group.checkedAt) && group.checkedAt > Date.UTC(2000, 0) && group.checkedAt <= Date.now() + 60000 ? Math.min(group.checkedAt, Date.now()) : Date.now();
+    groups.push({ scope: group.scope, records, checkedAt });
   }
   const chatId = device.chat_id, now = Math.max(Date.now(), (device.last_sync || 0) + 1);
   const account = await env.DB.prepare("INSERT INTO lms_accounts(chat_id,account) VALUES (?,?) ON CONFLICT(chat_id) DO UPDATE SET account=excluded.account WHERE lms_accounts.account=excluded.account RETURNING account")
@@ -176,6 +181,8 @@ export async function ingest(env, device, payload) {
       .bind(chatId, now, JSON.stringify(events.slice(i, i + 250))));
   writes.push(env.DB.prepare("INSERT OR IGNORE INTO lms_scopes(chat_id,scope) SELECT ?,value FROM json_each(?)")
     .bind(chatId, JSON.stringify([...uniqueScopes])));
+  writes.push(env.DB.prepare("INSERT INTO lms_scope_reads(chat_id,scope,checked_at) SELECT ?,json_extract(value,'$.scope'),json_extract(value,'$.checkedAt') FROM json_each(?) WHERE true ON CONFLICT(chat_id,scope) DO UPDATE SET checked_at=max(lms_scope_reads.checked_at,excluded.checked_at)")
+    .bind(chatId, JSON.stringify(groups.map(({ scope, checkedAt }) => ({ scope, checkedAt })))));
   await env.DB.batch(writes);
   await applySubmissions(env, chatId);
   await env.DB.prepare("DELETE FROM lms_events WHERE chat_id=? AND (at<? OR id NOT IN (SELECT id FROM lms_events WHERE chat_id=? ORDER BY id DESC LIMIT 500))")

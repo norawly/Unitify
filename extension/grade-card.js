@@ -14,7 +14,7 @@
     const pages = layout.length, images = [];
     for (let page = 0; page < pages; page++) {
       const sectionHeight = s => 40 + (s.section === "registry" ? Math.ceil(s.records.length / 3) * 98 : s.records.length * (s.section === "attendance" ? 52 : 68));
-      const height = 160 + layout[page].reduce((sum, s) => sum + sectionHeight(s), 0);
+      const height = 190 + layout[page].reduce((sum, s) => sum + sectionHeight(s), 0);
       const canvas = new OffscreenCanvas(1100, height), ctx = canvas.getContext("2d");
       const box = (x, y, w, h, color, border) => { ctx.beginPath(); ctx.roundRect(x, y, w, h, 10); ctx.fillStyle = color; ctx.fill(); if (border) { ctx.strokeStyle = border; ctx.lineWidth = 1; ctx.stroke(); } };
       const write = (text, x, y, font = "20px sans-serif", color = "#e2e9f7", width = 1000) => { ctx.font = font; ctx.fillStyle = color; ctx.fillText(fit(ctx, text, width), x, y); };
@@ -57,8 +57,9 @@
         });
         y += sectionHeight(section) - 30;
       }
-      write(`${view.records.length} items · Moodle snapshot${view.hidden ? ` · ${view.hidden} other-group rows hidden` : ""}`, 28, height - 18, "15px sans-serif", "#7d8ca6", 910);
-      write(`${page + 1} / ${pages}`, 1000, height - 18, "15px sans-serif", "#7d8ca6", 80);
+      write(`${view.records.length} items · Moodle snapshot${view.hidden ? ` · ${view.hidden} other-group rows hidden` : ""}`, 28, height - 25, "15px sans-serif", "#7d8ca6", 820);
+      box(890, height - 61, 182, 44, "#2b3d60", "#718dcb");
+      write(`Page ${page + 1}/${pages}`, 910, height - 31, "600 23px sans-serif", "#eef3ff", 150);
       let bytes = new Uint8Array(await (await canvas.convertToBlob({ type: "image/jpeg", quality: 0.80 })).arrayBuffer());
       if (bytes.length > 200000) bytes = new Uint8Array(await (await canvas.convertToBlob({ type: "image/jpeg", quality: 0.55 })).arrayBuffer());
       let binary = "";

@@ -10,6 +10,7 @@ import { isPrivateUpdate } from "./access.js";
 import { t as dict, subject as subjectName, durIn } from "./i18n.js";
 import { createPairCode, revokeDevice, recordsText } from "./lms-extension.js";
 import { gradesMenu, attendanceReport, gradePhoto } from "./academic.js";
+import { attendanceSnapshot, classAttendance } from "./attendance.js";
 
 /* за сколько напоминать, решает расписание (worker/sched.js: leadOf) — в настройках только вкл/выкл */
 const RATE = 7;                                // обращений в минуту с одного аккаунта
@@ -64,10 +65,11 @@ export async function sendClassCard(e, chatId, user, g, iso, state) {
   const it = g.it, lang = langOf(user);
   const maps = await loadRoomMaps(e);
   const info = (!it.online && !T.bldg(it)) ? (maps.rooms || {})[T.mapKey(it.room)] : null;
-  const text = X.classCard(g, info, state, lang);
+  const attendance = classAttendance(await attendanceSnapshot(e, chatId), g, iso, T.localNow(e));
+  const text = X.classCard(g, info, state, lang, attendance);
   // Карточка пары не является меню: фото раскрывается нажатием, кнопки под ней не нужны.
   const markup = undefined;
-  const ref = { slug: user.person, iso, rs: g.rs, state: state.kind, lang, info, photo: !!info };
+  const ref = { slug: user.person, iso, rs: g.rs, state: state.kind, attendance, lang, info, photo: !!info };
 
   /* та же пара уже висит последним сообщением — обновляем её, а не плодим дубли */
   const last = await M.newest(e, chatId);
@@ -361,8 +363,8 @@ async function todayCard(c, iso) {
     text: `${T.hhmm(g.rs)}  ${subjectName(g.it.subject, c.lang).slice(0, 28)}`,
     callback_data: `c:${iso}:${g.rs}`,
   }]) };
-  if (!photo) return show(c, X.dayText(S, iso, c.now, c.lang), markup, false, "day");
-  return post(c.env, c.chatId, { kind: "day", photo, text: caption, markup });
+  if (!photo) return show(c, X.dayText(S, iso, c.now, c.lang), markup, false, "screen");
+  return post(c.env, c.chatId, { kind: "screen", photo, text: caption, markup });
 }
 
 async function showDay(c, iso, edit) {

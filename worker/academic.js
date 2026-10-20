@@ -1,7 +1,10 @@
 import * as M from "./msgs.js";
 import { esc } from "./text.js";
 import { gradeView, CARD_FORMAT } from "../extension/lib/grade-view.mjs";
-import { syncContext } from "./lms-policy.js";
+import { syncContext, linkedSchedule } from "./lms-policy.js";
+import { attendanceTotals, attendanceForecast } from "./attendance.js";
+import { localNow } from "./sched.js";
+import { RELEASE } from "../extension/lib/sync-policy.mjs";
 
 const short = name => String(name).split("|")[0].trim();
 export async function academicCourses(env, chatId) {
@@ -21,21 +24,27 @@ export async function gradesMenu(env, chatId, lang) {
   return M.post(env, chatId, { kind: "academic", text: courses.length ? (lang === "en" ? "📊 Grades" : "📊 Оценки") : "Нет данных. Обновите Moodle с Unitify Bridge.",
     markup: { inline_keyboard: courses.map(c => [{ text: c.name.slice(0, 48), callback_data: `lg:${c.id}:0` }]) } });
 }
-export function attendanceLine(course) {
-  let earned = 0, possible = 0, taken = 0, present = 0;
-  for (const r of course.attendance) {
-    if (!r.status || /^[?–—-]$/.test(r.status)) continue;
-    taken++;
-    const p = r.points.match(/(-?\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)/);
-    if (p) { earned += +p[1].replace(",", "."); possible += +p[2].replace(",", "."); }
-    if (/^present|^присутств/iu.test(r.status)) present++;
-  }
-  const percent = possible ? Math.round(1000 * earned / possible) / 10 : taken ? Math.round(1000 * present / taken) / 10 : null;
-  return `<b>${esc(course.name)}</b>\n${percent === null ? "—" : `${percent}%`} · ${earned}/${possible} баллов · ${taken} занятий`;
+export function attendanceLine(course, forecast, lang = "ru") {
+  const f = forecast || attendanceTotals(course.attendance), en = lang === "en";
+  const pct = n => n === null ? "—" : +n.toFixed(2) + "%";
+  const icon = f.percent === null ? "⚪" : f.percent < 70 ? "🔴" : f.percent > 70 ? "🟢" : "🟡";
+  let text = `<b>${esc(course.name)}</b>\n${icon} <b>${pct(f.percent)}</b> · ${f.earned}/${f.possible} · ${f.taken} ${en ? "marks" : "отметок"}`;
+  if (!f.available) return text + (f.unmatched ? `\n<i>${en ? "No matching course in the timetable" : "Нет совпадения с расписанием для прогноза"}</i>` : "");
+  const range = (a, b, fn = String) => a === b ? fn(a) : `${fn(Math.min(a, b))}–${fn(Math.max(a, b))}`;
+  text += `\n${en ? "Remaining" : "Осталось"}: ≈${f.remainingBlocks} ${en ? "classes" : "пар"} · ${range(f.low.remaining, f.high.remaining)} ${en ? "marks" : "отметок"}`;
+  const max = f.low.maxPercent === null || f.high.maxPercent === null ? "—" : range(f.low.maxPercent, f.high.maxPercent, n => +n.toFixed(2)) + "%";
+  text += `\n${en ? "If all attended" : "Если посетить всё"}: ${max}`;
+  if (f.low.maxPercent === null && f.high.maxPercent === null) text += `\n${en ? "No marked sessions to calculate a percentage" : "Нет выставленных отметок для расчёта процента"}`;
+  else if (Math.max(f.low.maxPercent || 0, f.high.maxPercent || 0) <= 70) text += `\n⚠️ ${en ? "Above 70% is not reachable with remaining marks" : "По оставшимся отметкам выше 70% уже не набрать"}`;
+  else text += `\n${en ? "Can miss" : "Запас пропусков"}: ${Math.min(f.low.skipBlocks, f.high.skipBlocks)} ${en ? "whole classes or" : "целых пар или"} ${Math.min(f.low.skipMarks, f.high.skipMarks)} ${en ? "marks" : "отметок"}`;
+  if (f.uncertain) text += `\n<i>${en ? "Estimate: marking frequency/scale may vary" : "Прогноз: частота/шкала отметок может отличаться"}</i>`;
+  return text;
 }
 export async function attendanceReport(env, chatId, lang) {
   const courses = (await academicCourses(env, chatId)).filter(c => c.attendance.length);
-  const text = courses.length ? "📍 Attendance\n\n" + courses.map(attendanceLine).join("\n\n") : "Нет данных. Обновите Moodle с Unitify Bridge.";
+  const S = courses.length ? await linkedSchedule(env, chatId) : null, now = localNow(env);
+  const text = courses.length ? "📍 Attendance\n\n" + courses.map(c => attendanceLine(c, attendanceForecast(c, S, now), lang)).join("\n\n") +
+    (lang === "en" ? "\n\n? is excluded. Forecast: attend every other class; stay strictly above 70%." : "\n\n? не учитывается. Запас — при посещении всех остальных пар, строго выше 70%.") : "Нет данных. Обновите Moodle с Unitify Bridge.";
   return M.post(env, chatId, { kind: "academic", text });
 }
 export async function gradePhoto(env, chatId, courseId, page = 0) {
@@ -56,14 +65,14 @@ export async function gradePhoto(env, chatId, courseId, page = 0) {
         text += line;
       }
     }
-    return M.post(env, chatId, { kind: "academic", text: text + "\nНовая карточка появится после синхронизации Unitify Bridge 0.3.1." });
+    return M.post(env, chatId, { kind: "academic", text: text + `\nНовая карточка появится после синхронизации Unitify Bridge ${RELEASE}.` });
   }
   const card = await env.DB.prepare("SELECT image FROM lms_grade_cards WHERE chat_id=? AND course_id=? AND page=?").bind(chatId, courseId, page).first();
   if (!card) return;
   const bytes = Uint8Array.from(atob(card.image), c => c.charCodeAt(0));
   const buttons = [];
-  if (page > 0) buttons.push({ text: "←", callback_data: `lg:${courseId}:${page - 1}` });
-  if (page + 1 < first.pages) buttons.push({ text: "→", callback_data: `lg:${courseId}:${page + 1}` });
+  if (page > 0) buttons.push({ text: `← Page ${page}/${first.pages}`, callback_data: `lg:${courseId}:${page - 1}` });
+  if (page + 1 < first.pages) buttons.push({ text: `Page ${page + 2}/${first.pages} →`, callback_data: `lg:${courseId}:${page + 1}` });
   buttons.push({ text: "Предметы", callback_data: "lg:menu" });
-  return M.postImage(env, chatId, { kind: "academic", bytes, text: `${esc(course.name)}${first.pages > 1 ? ` · ${page + 1}/${first.pages}` : ""}`, markup: { inline_keyboard: [buttons] } });
+  return M.postImage(env, chatId, { kind: "academic", bytes, text: `${esc(course.name)} · <b>Page ${page + 1}/${first.pages}</b>`, markup: { inline_keyboard: [buttons] } });
 }

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Unitify Bridge",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "homepage_url": "https://s.zhengisbay.com/bridge-privacy.html",
   "icons": { "128": "icons/icon-192.png" },
   "description": "Read-only homework, attendance and grade sync with your Unitify Telegram bot.",

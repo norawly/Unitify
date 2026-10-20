@@ -39,7 +39,7 @@ export function roomLine(it, info, lang) {
 }
 
 /* карточка пары: сколько осталось и во сколько, время пары, предмет, кабинет */
-export function classCard(g, info, state, lang) {
+export function classCard(g, info, state, lang, attendance = "Waiting for Moodle") {
   const L = dict(lang), it = g.it;
   const at = T.hhmm(g.rs);
   const when = state.iso ? whenLabel(state.iso, { iso: state.nowIso || state.iso }, L) : "";
@@ -52,7 +52,8 @@ export function classCard(g, info, state, lang) {
   return `${head}\n\n` +
     `🕐 <b>${T.hhmm(g.rs)} – ${T.hhmm(g.re)}</b>\n` +
     `📘 <b>${esc(subjectName(it.subject, lang))}</b> · ${L[it.type] || L.practice}` +
-    (roomLine(it, info, lang) ? "\n" + roomLine(it, info, lang) : "");
+    (roomLine(it, info, lang) ? "\n" + roomLine(it, info, lang) : "") +
+    `\n📍 Attendance: <b>${esc(attendance)}</b>`;
 }
 
 /* строка «где» в списках */

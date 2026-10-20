@@ -69,18 +69,18 @@ export async function runCron(env, source = "cron") {
       }
     }
 
-    /* последняя пара закончилась: убираем напоминания и показываем все дедлайны заново */
+    /* Итоговые карточки остаются до ночной уборки — в них видна отметка Moodle. */
     if (on && today.length) {
       const end = today[today.length - 1].re;
       if (now.min >= end && now.min < end + 5 && await db.markSent(env, u.chat_id, `${now.iso}:evening`)) {
-        await M.dropKind(env, u.chat_id, "class");
+        await M.tidy(env, u.chat_id, load);
         await evening(env, u);
         budget -= 3;
       }
     }
 
     /* карточки пересчитываем не каждую минуту, а когда пара началась или закончилась */
-    if (today.some(g => now.min - g.rs === 1 || now.min - g.re === 1))
+    if (now.min % 5 === 0 || today.some(g => now.min - g.rs === 1 || now.min - g.re === 1))
       await M.tidy(env, u.chat_id, load).catch(() => {});
   }
 

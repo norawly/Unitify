@@ -1,5 +1,5 @@
 // Shared presentation of current and legacy snapshots. Never changes Moodle data.
-export const CARD_FORMAT = 2;
+export const CARD_FORMAT = 3;
 const tidy = value => String(value ?? "").replace(/\s+/g, " ").trim();
 export function gradeTitle(value) {
   return tidy(value).replace(/^Calculated\s*grade\s*/iu, "")

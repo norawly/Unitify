@@ -116,8 +116,8 @@ async function receive(result) {
       records[item.id] = item;
     }
     scopes.add(group.scope);
-    scopeAt[group.scope] = result.capturedAt;
-    return [{ scope: group.scope, records: items }];
+    scopeAt[group.scope] = group.checkedAt || result.capturedAt;
+    return [{ scope: group.scope, records: items, checkedAt: group.checkedAt || result.capturedAt }];
   });
   accounts[result.account] = { ...previous, records, scopes: [...scopes], scopeAt, history: history.slice(0, 500) };
   const catalogs = { ...(state.catalogs || {}) };

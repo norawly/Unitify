@@ -8,6 +8,7 @@ import { createPairCode, handleLms, ingest, applySubmissions, notifyChanges, sav
 import { academicCourses, attendanceLine, gradesMenu, gradePhoto } from "../worker/academic.js";
 import { normalizeRecord, safeUrl, changes } from "../extension/lib/model.mjs";
 import { completed } from "../worker/moodle.js";
+import * as M from "../worker/msgs.js";
 
 const parserContext = {};
 runInNewContext(readFileSync(new URL("../extension/parser.js", import.meta.url), "utf8"), { globalThis: parserContext, URL });
@@ -225,7 +226,7 @@ test("grade selection and private photo work from the database without a Moodle 
   const f = fixture(), original = globalThis.fetch, calls = [];
   try {
     await f.pair(); await ingest(f.env, await f.device(), f.payload([grade, attendance]));
-    const cards = [{ courseId: "42", page: 0, pages: 1, signature: "a".repeat(64), format: 2, group: "", image: "/9j/AA==" }];
+    const cards = [{ courseId: "42", page: 0, pages: 1, signature: "a".repeat(64), format: 3, group: "", image: "/9j/AA==" }];
     validateGradeCards(cards); await saveGradeCards(f.env, 101, cards);
     assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM lms_grade_cards WHERE chat_id=202").get().n, 0);
     f.env.TELEGRAM_TOKEN = "test"; f.env.TG_API = "https://example.invalid";
@@ -244,4 +245,38 @@ test("grade selection and private photo work from the database without a Moodle 
     const [c] = await academicCourses(f.env, 101); assert.match(attendanceLine(c), /100%/);
     assert.deepEqual(await academicCourses(f.env, 202), []);
   } finally { globalThis.fetch = original; f.sqlite.close(); }
+});
+
+test("switching screens removes old grade menus and retains class/deadline notifications", async () => {
+  const f = fixture(), original = globalThis.fetch, deleted = []; let next = 100;
+  f.env.TELEGRAM_TOKEN = "test"; f.env.TG_API = "https://example.invalid";
+  try {
+    f.sqlite.exec("INSERT INTO msgs(chat_id,message_id,kind,at) VALUES (101,1,'academic',1),(101,2,'class',2),(101,3,'deadline',3)");
+    globalThis.fetch = async (url, options) => {
+      const body = JSON.parse(options.body);
+      if (String(url).endsWith("/deleteMessage")) { deleted.push(body.message_id); return Response.json({ ok: true, result: true }); }
+      return Response.json({ ok: true, result: { message_id: ++next } });
+    };
+    await M.post(f.env, 101, { kind: "info", text: "Deadlines" });
+    assert.ok(deleted.includes(1));
+    assert.equal(f.sqlite.prepare("SELECT count(*) n FROM msgs WHERE chat_id=101 AND kind='class'").get().n, 1);
+    assert.equal(f.sqlite.prepare("SELECT count(*) n FROM msgs WHERE chat_id=101 AND kind='deadline'").get().n, 1);
+    await M.post(f.env, 101, { kind: "academic", text: "Attendance" });
+    assert.equal(f.sqlite.prepare("SELECT count(*) n FROM msgs WHERE chat_id=101 AND kind='screen'").get().n, 1);
+  } finally { globalThis.fetch = original; f.sqlite.close(); }
+});
+
+test("a successful unchanged attendance read updates evidence without changing the mark", async () => {
+  const f = fixture();
+  try {
+    await f.pair(); const p = f.payload([attendance]);
+    p.groups.find(g => g.scope.includes('attendance')).checkedAt = Date.now() - 60000;
+    await ingest(f.env, await f.device(), p);
+    const a = f.sqlite.prepare("SELECT checked_at FROM lms_scope_reads WHERE chat_id=101 AND scope='42:attendance:456'").get().checked_at;
+    p.groups.find(g => g.scope.includes('attendance')).checkedAt = a + 1000;
+    await ingest(f.env, await f.device(), p);
+    const b = f.sqlite.prepare("SELECT checked_at FROM lms_scope_reads WHERE chat_id=101 AND scope='42:attendance:456'").get().checked_at;
+    assert.equal(b, a + 1000);
+    assert.equal(f.sqlite.prepare("SELECT count(*) n FROM lms_events").get().n, 0);
+  } finally { f.sqlite.close(); }
 });
