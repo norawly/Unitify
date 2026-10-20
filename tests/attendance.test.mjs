@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { attendanceTotals, attendanceForecast, classAttendance, sessionStart } from "../worker/attendance.js";
 import { dayBlocks } from "../worker/sched.js";
+import { attendanceSummary } from "../worker/academic.js";
 const ms = (day, time = "15:00") => Date.parse(`${day}T${time}:00+05:00`);
 const now = (iso, time = "15:00") => ({ iso, min: +time.slice(0, 2) * 60 + +time.slice(3), ms: ms(iso, time) });
 let id = 100;
@@ -62,4 +63,24 @@ test("lesson status distinguishes real marks, waiting data, missing data, and mi
   snapshot.records = [row("2026-10-12", "12:00"), row("2026-10-12", "13:05", "Absent", "0 / 2")];
   assert.equal(classAttendance(snapshot, g, "2026-10-12", now("2026-10-12")), "Present / Absent");
   assert.equal(sessionStart(snapshot.records[0]), ms("2026-10-12", "12:00"));
+});
+
+test("compact attendance has no remaining/max lines and one estimate note at the very end", () => {
+  for (const lang of ["en", "ru"]) {
+    const text = attendanceSummary([course([]), course([])], S, now("2026-10-12"), lang);
+    assert.doesNotMatch(text, /Remaining:|Осталось:|If all attended:|Если посетить всё:/);
+    assert.equal((text.match(/Estimate:|Прогноз:/g) || []).length, 1);
+    assert.ok(text.endsWith(lang === "en" ? "Estimate: marking frequency/scale may vary</i>" : "Прогноз: частота/шкала отметок может отличаться</i>"));
+    assert.match(text, lang === "en" ? /Can miss:/ : /Запас пропусков:/);
+  }
+});
+
+test("26 October holiday removes that Monday from lesson lookup and forecast", () => {
+  const extended = structuredClone(S); delete extended.term.exams;
+  const before = attendanceForecast(course([]), extended, now("2026-10-20"));
+  extended.term.holidays = { "2026-10-26": "Holiday" };
+  const after = attendanceForecast(course([]), extended, now("2026-10-20"));
+  assert.equal(dayBlocks(extended, "2026-10-26").length, 0);
+  assert.equal(before.remainingBlocks - after.remainingBlocks, 1);
+  assert.equal(before.high.remaining - after.high.remaining, 2);
 });

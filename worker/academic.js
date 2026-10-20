@@ -30,21 +30,23 @@ export function attendanceLine(course, forecast, lang = "ru") {
   const icon = f.percent === null ? "⚪" : f.percent < 70 ? "🔴" : f.percent > 70 ? "🟢" : "🟡";
   let text = `<b>${esc(course.name)}</b>\n${icon} <b>${pct(f.percent)}</b> · ${f.earned}/${f.possible} · ${f.taken} ${en ? "marks" : "отметок"}`;
   if (!f.available) return text + (f.unmatched ? `\n<i>${en ? "No matching course in the timetable" : "Нет совпадения с расписанием для прогноза"}</i>` : "");
-  const range = (a, b, fn = String) => a === b ? fn(a) : `${fn(Math.min(a, b))}–${fn(Math.max(a, b))}`;
-  text += `\n${en ? "Remaining" : "Осталось"}: ≈${f.remainingBlocks} ${en ? "classes" : "пар"} · ${range(f.low.remaining, f.high.remaining)} ${en ? "marks" : "отметок"}`;
-  const max = f.low.maxPercent === null || f.high.maxPercent === null ? "—" : range(f.low.maxPercent, f.high.maxPercent, n => +n.toFixed(2)) + "%";
-  text += `\n${en ? "If all attended" : "Если посетить всё"}: ${max}`;
   if (f.low.maxPercent === null && f.high.maxPercent === null) text += `\n${en ? "No marked sessions to calculate a percentage" : "Нет выставленных отметок для расчёта процента"}`;
   else if (Math.max(f.low.maxPercent || 0, f.high.maxPercent || 0) <= 70) text += `\n⚠️ ${en ? "Above 70% is not reachable with remaining marks" : "По оставшимся отметкам выше 70% уже не набрать"}`;
   else text += `\n${en ? "Can miss" : "Запас пропусков"}: ${Math.min(f.low.skipBlocks, f.high.skipBlocks)} ${en ? "whole classes or" : "целых пар или"} ${Math.min(f.low.skipMarks, f.high.skipMarks)} ${en ? "marks" : "отметок"}`;
-  if (f.uncertain) text += `\n<i>${en ? "Estimate: marking frequency/scale may vary" : "Прогноз: частота/шкала отметок может отличаться"}</i>`;
   return text;
+}
+export function attendanceSummary(courses, S, now, lang) {
+  if (!courses.length) return lang === "en" ? "No data. Open Moodle with Unitify Bridge." : "Нет данных. Обновите Moodle с Unitify Bridge.";
+  const forecasts = courses.map(c => attendanceForecast(c, S, now));
+  const lines = courses.map((c, i) => attendanceLine(c, forecasts[i], lang));
+  const footer = lang === "en" ? "? is excluded. Absence allowance assumes you attend all other classes and stay strictly above 70%." : "? не учитывается. Запас — при посещении всех остальных пар, строго выше 70%.";
+  const note = forecasts.some(f => f.uncertain) ? "\n<i>" + (lang === "en" ? "Estimate: marking frequency/scale may vary" : "Прогноз: частота/шкала отметок может отличаться") + "</i>" : "";
+  return "📍 Attendance\n\n" + lines.join("\n\n") + "\n\n" + footer + note;
 }
 export async function attendanceReport(env, chatId, lang) {
   const courses = (await academicCourses(env, chatId)).filter(c => c.attendance.length);
   const S = courses.length ? await linkedSchedule(env, chatId) : null, now = localNow(env);
-  const text = courses.length ? "📍 Attendance\n\n" + courses.map(c => attendanceLine(c, attendanceForecast(c, S, now), lang)).join("\n\n") +
-    (lang === "en" ? "\n\n? is excluded. Forecast: attend every other class; stay strictly above 70%." : "\n\n? не учитывается. Запас — при посещении всех остальных пар, строго выше 70%.") : "Нет данных. Обновите Moodle с Unitify Bridge.";
+  const text = attendanceSummary(courses, S, now, lang);
   return M.post(env, chatId, { kind: "academic", text });
 }
 export async function gradePhoto(env, chatId, courseId, page = 0) {
