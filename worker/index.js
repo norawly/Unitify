@@ -4,7 +4,7 @@ import { handleUpdate } from "./bot.js";
 import { runCron, ensureWebhook } from "./cron.js";
 import { tg, webhookSecret } from "./tg.js";
 import * as db from "./db.js";
-import { isPrivateUpdate, privateChatIds } from "./access.js";
+import { isPrivateUpdate, privateChatIds, demoChatIds } from "./access.js";
 import { handleLms } from "./lms-extension.js";
 
 export { Ticker } from "./ticker.js";
@@ -60,6 +60,7 @@ export default {
         ok: !!info.ok,
         access: "private",
         allowed_accounts: privateChatIds(env).length,
+        demonstration_accounts: demoChatIds(env).length,
         webhook: w.url || null,
         pending_updates: w.pending_update_count,
         last_error: w.last_error_message || null,

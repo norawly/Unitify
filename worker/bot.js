@@ -6,7 +6,7 @@ import * as db from "./db.js";
 import * as M from "./msgs.js";
 import * as moodle from "./moodle.js";
 import { tg } from "./tg.js";
-import { isPrivateUpdate } from "./access.js";
+import { isPrivateUpdate, demoSource } from "./access.js";
 import { t as dict, subject as subjectName, durIn } from "./i18n.js";
 import { createPairCode, revokeDevice, recordsText } from "./lms-extension.js";
 import { gradesMenu, attendanceReport, gradePhoto } from "./academic.js";
@@ -91,6 +91,13 @@ export async function sendClassCard(e, chatId, user, g, iso, state) {
 /* Личное расписание открывается только со своего аккаунта.
    Кто привязался первым (а это уже сделано), тот и владелец — остальным отказ. */
 export async function allowed(e, slug, chatId) {
+  const source = demoSource(e, chatId);
+  if (source) {
+    const owner = await db.getUser(e, source);
+    const claim = await db.ownerOf(e, slug);
+    return !!owner && ["admin", "approved"].includes(owner.status) &&
+      owner.person === slug && claim?.chat_id === source;
+  }
   const p = (await loadPeople(e)).find(x => x.slug === slug);
   if (!p || !p.private) return true;
   const row = await db.ownerOf(e, slug);
@@ -147,6 +154,8 @@ async function onText(c, text) {
   const L = dict(c.lang);
   const cmd = text.split(/\s+/)[0].toLowerCase().replace(/@\w+$/, "");
   if (cmd === "/start") return start(c);
+  if (demoSource(c.env, c.chatId) && (BARCODE.test(text) || cmd === "/extension" ||
+      /lms\.astanait\.edu\.kz\/calendar/.test(text))) return pinnedSettings(c);
   if (BARCODE.test(text)) return byBarcode(c, text);
   if (!c.user) return stranger(c);
   if (c.user.status === "pending") return pendingNotice(c);
@@ -241,7 +250,8 @@ async function byBarcode(c, code) {
 async function welcome(e, chatId, user, now) {
   const L = dict(langOf(user));
   await setMenuButton(e, chatId, user);
-  await post(e, chatId, { kind: "menu", text: L.welcome(user.lead_min || 20), markup: menuKeyboard(e, user) });
+  await post(e, chatId, { kind: "menu", text: (demoSource(e, chatId)
+    ? (langOf(user) === "en" ? "🔒 Read-only demonstration · Nurali's data\n\n" : "🔒 Демонстрационный доступ · данные Нурали\n\n") : "") + L.welcome(user.lead_min || 20), markup: menuKeyboard(e, user) });
   return nextCard(e, chatId, user, now);
 }
 
@@ -292,6 +302,8 @@ async function onCallback(c, cb) {
   const [kind, a, b] = String(cb.data || "").split(":");
   let toast = "";
   if (!c.user || c.user.status === "pending") toast = "Сначала баркод — /start";
+  else if (demoSource(c.env, c.chatId) && ["s", "lx", "hd", "hu", "a"].includes(kind))
+    await pinnedSettings(c, true);
   else if (kind === "n") await nextCard(c.env, c.chatId, c.user, c.now);
   else if (kind === "t") await preview(c);
   else if (kind === "d") await showDay(c, a, true);
@@ -431,7 +443,7 @@ async function deadlines(c, _which, edit) {
   if (!c.user.cal_url) return show(c, L.cal_how, null, edit);
   const S = await loadSchedule(c.env, c.user.person);
   const list = await moodle.visibleUpcoming(c.env, c.chatId, S, Date.now(), 20, off);
-  const undo = list.filter(d => d.done_at).slice(0, 8).map(d => [{
+  const undo = (demoSource(c.env, c.chatId) ? [] : list.filter(d => d.done_at)).slice(0, 8).map(d => [{
     text: `${L.btn_undo} · ${String(d.title).replace(/ is due$/i, "").slice(0, 24)}`,
     callback_data: `hu:${d.id}`,
   }]);
@@ -440,7 +452,13 @@ async function deadlines(c, _which, edit) {
 }
 
 /* ---------- настройки ---------- */
+export const pinnedSettingsText = lang => lang === "en"
+  ? "🔒 <b>Read-only demonstration</b>\n\nNurali's academic data is linked to this account. Timetable, deadlines, grades and attendance are available for viewing.\n\nThe data source and settings are fixed. Editing records, marking homework as done, changing the timetable, or connecting/disconnecting Moodle and Unitify Bridge is disabled.\n\nTo change access or connect your own account, contact the developer: @nxxbruh."
+  : "🔒 <b>Демонстрационный доступ</b>\n\nЗа аккаунтом закреплены учебные данные Нурали: расписание, дедлайны, оценки и посещаемость. Их можно просматривать, но нельзя изменять.\n\nИсточник данных и настройки зафиксированы. Смена расписания, отметки о выполнении заданий, подключение и отключение Moodle и Unitify Bridge недоступны.\n\nДля изменения доступа или подключения собственных данных обратитесь к разработчику: @nxxbruh.";
+const pinnedSettings = (c, edit = false) => show(c, pinnedSettingsText(c.lang), null, edit);
+
 async function settings(c, what, edit) {
+  if (demoSource(c.env, c.chatId)) { await pinnedSettings(c, edit); return ""; }
   const u = c.user;
   const L0 = dict(c.lang);
   if (what === "extension") { await extensionScreen(c, false, edit); return ""; }
@@ -493,6 +511,7 @@ async function settings(c, what, edit) {
 }
 
 async function extensionScreen(c, newCode, edit = false) {
+  if (demoSource(c.env, c.chatId)) return pinnedSettings(c, edit);
   const en = c.lang === "en";
   const device = await c.env.DB.prepare("SELECT account,last_sync FROM lms_devices WHERE chat_id=?").bind(c.chatId).first();
   const code = newCode ? await createPairCode(c.env, c.chatId) : null;

@@ -5,10 +5,11 @@ import { syncContext, linkedSchedule } from "./lms-policy.js";
 import { attendanceTotals, attendanceForecast } from "./attendance.js";
 import { localNow } from "./sched.js";
 import { RELEASE } from "../extension/lib/sync-policy.mjs";
+import { dataChatId } from "./access.js";
 
 const short = name => String(name).split("|")[0].trim();
 export async function academicCourses(env, chatId) {
-  const rows = (await env.DB.prepare("SELECT data,changed_at FROM lms_records WHERE chat_id=?").bind(chatId).all()).results;
+  const rows = (await env.DB.prepare("SELECT data,changed_at FROM lms_records WHERE chat_id=?").bind(dataChatId(env, chatId)).all()).results;
   const courses = new Map();
   for (const row of rows) {
     const record = JSON.parse(row.data);
@@ -53,7 +54,8 @@ export async function gradePhoto(env, chatId, courseId, page = 0) {
   const courses = await academicCourses(env, chatId), course = courses.find(c => c.id === courseId);
   if (!course) return;
   const { group } = await syncContext(env, chatId);
-  const first = await env.DB.prepare("SELECT pages,updated_at,format,student_group FROM lms_grade_cards WHERE chat_id=? AND course_id=? AND page=0").bind(chatId, courseId).first();
+  const sourceId = dataChatId(env, chatId);
+  const first = await env.DB.prepare("SELECT pages,updated_at,format,student_group FROM lms_grade_cards WHERE chat_id=? AND course_id=? AND page=0").bind(sourceId, courseId).first();
   if (!first || first.format !== CARD_FORMAT || first.student_group !== group || first.updated_at < course.gradesUpdatedAt || page < 0 || page >= first.pages) {
     const view = gradeView(course.grades, group);
     const labels = { registry: "Register / totals", attendance: "Attendance", exams: "Exams & checkpoints", assignments: "Assignments & practice" };
@@ -69,7 +71,7 @@ export async function gradePhoto(env, chatId, courseId, page = 0) {
     }
     return M.post(env, chatId, { kind: "academic", text: text + `\nНовая карточка появится после синхронизации Unitify Bridge ${RELEASE}.` });
   }
-  const card = await env.DB.prepare("SELECT image FROM lms_grade_cards WHERE chat_id=? AND course_id=? AND page=?").bind(chatId, courseId, page).first();
+  const card = await env.DB.prepare("SELECT image FROM lms_grade_cards WHERE chat_id=? AND course_id=? AND page=?").bind(sourceId, courseId, page).first();
   if (!card) return;
   const bytes = Uint8Array.from(atob(card.image), c => c.charCodeAt(0));
   const buttons = [];

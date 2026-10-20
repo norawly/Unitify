@@ -1,8 +1,20 @@
 /* D1: пользователи, отправленные напоминания, служебные ключи */
-import { privateChatIds } from "./access.js";
+import { privateChatIds, botChatIds, demoSource } from "./access.js";
 
-export const getUser = (env, id) =>
-  env.DB.prepare("SELECT * FROM users WHERE chat_id = ?").bind(id).first();
+async function effectiveUser(env, row, known = []) {
+  if (!row || row.status === "banned") return row;
+  const sourceId = demoSource(env, row.chat_id);
+  if (!sourceId) return row;
+  const source = known.find(u => u.chat_id === sourceId) ||
+    await env.DB.prepare("SELECT * FROM users WHERE chat_id = ?").bind(sourceId).first();
+  if (!source || !["admin", "approved"].includes(source.status)) return null;
+  return { ...row, status: "approved", person: source.person, lang: source.lang,
+    lead_min: source.lead_min, demo: true,
+    // A presence marker only. The private Moodle calendar URL stays with its owner.
+    cal_url: source.cal_url ? "linked-read-only" : null };
+}
+export const getUser = async (env, id) =>
+  effectiveUser(env, await env.DB.prepare("SELECT * FROM users WHERE chat_id = ?").bind(id).first());
 
 export const createUser = (env, u) =>
   env.DB.prepare(
@@ -14,6 +26,7 @@ const EDITABLE = new Set(["person", "status", "lead_min", "morning", "evening", 
                           "lang", "cal_url", "cal_hash", "cal_checked",
                           "geo", "lead_home", "lead_campus", "lat", "lon", "loc_at", "loc_until", "campus_lat", "campus_lon"]);
 export async function updateUser(env, id, fields) {
+  if (demoSource(env, id)) throw new Error("Demo account is read-only");
   const keys = Object.keys(fields).filter(k => EDITABLE.has(k));
   if (!keys.length) return;
   await env.DB.prepare(`UPDATE users SET ${keys.map(k => k + " = ?").join(", ")} WHERE chat_id = ?`)
@@ -33,10 +46,11 @@ export async function admins(env) {
   return (await env.DB.prepare("SELECT chat_id FROM users WHERE status = 'admin'").all()).results;
 }
 export async function activeUsers(env) {
-  const ids = privateChatIds(env);
-  if (ids.length !== 2) return [];
-  return (await env.DB.prepare("SELECT * FROM users WHERE status IN ('admin', 'approved') AND chat_id IN (?, ?)")
+  if (privateChatIds(env).length !== 2) return [];
+  const ids = botChatIds(env), marks = ids.map(() => "?").join(",");
+  const users = (await env.DB.prepare(`SELECT * FROM users WHERE status IN ('admin', 'approved') AND chat_id IN (${marks})`)
     .bind(...ids).all()).results;
+  return (await Promise.all(users.map(row => effectiveUser(env, row, users)))).filter(Boolean);
 }
 export async function allUsers(env) {
   return (await env.DB.prepare("SELECT * FROM users ORDER BY created_at DESC LIMIT 50").all()).results;

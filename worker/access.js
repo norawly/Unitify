@@ -1,4 +1,5 @@
-/* Доступ только двум владельцам. ID хранятся в серверном секрете, не в Git и не в сайте. */
+/* Два владельца и явно разрешённые read-only зрители.
+   ID и источник демонстрации — только в серверных секретах, не в Git/сайте. */
 import { tg } from "./tg.js";
 
 export function privateChatIds(env) {
@@ -8,11 +9,31 @@ export function privateChatIds(env) {
   return ids.every(Number.isSafeInteger) && ids[0] !== ids[1] ? ids : [];
 }
 
+// Separate from owner access: a viewer can never pair an extension, become an
+// owner or write to the source account. Invalid configuration fails closed.
+export function demoAccess(env) {
+  const owners = privateChatIds(env);
+  if (owners.length !== 2) return null;
+  let value; try { value = JSON.parse(env.BOT_DEMO_ACCESS || "null"); } catch { return null; }
+  if (!value || !owners.includes(value.source) || !Array.isArray(value.viewers) ||
+      value.viewers.length < 1 || value.viewers.length > 2 ||
+      value.viewers.some(id => !Number.isSafeInteger(id) || id <= 0 || owners.includes(id)) ||
+      new Set(value.viewers).size !== value.viewers.length) return null;
+  return value;
+}
+export const demoChatIds = env => demoAccess(env)?.viewers || [];
+export const demoSource = (env, chatId) => {
+  const access = demoAccess(env);
+  return access?.viewers.includes(chatId) ? access.source : null;
+};
+export const dataChatId = (env, chatId) => demoSource(env, chatId) || chatId;
+export const botChatIds = env => [...privateChatIds(env), ...demoChatIds(env)];
+
 export function isPrivateUpdate(env, update) {
   const message = update?.message || update?.callback_query?.message;
   const from = update?.message?.from || update?.callback_query?.from;
   return message?.chat?.type === "private" && !from?.is_bot &&
-    from?.id === message.chat.id && privateChatIds(env).includes(from.id);
+    from?.id === message.chat.id && botChatIds(env).includes(from.id);
 }
 
 const CLEANUP_KEY = "private_access_cleanup_v1";
@@ -32,8 +53,9 @@ export async function retireOtherUsers(env) {
   const owners = (await env.DB.prepare("SELECT person, chat_id FROM owners WHERE person IN ('nurali', 'nurbek')").all()).results;
   if (owners.length !== 2 || new Set(owners.map(o => o.chat_id)).size !== 2 || owners.some(o => !ids.includes(o.chat_id)))
     throw new Error("Private access IDs do not match the two confirmed owners; cleanup stopped");
-  const users = (await env.DB.prepare("SELECT chat_id FROM users WHERE chat_id NOT IN (?, ?)")
-    .bind(...ids).all()).results;
+  const retained = botChatIds(env), marks = retained.map(() => "?").join(",");
+  const users = (await env.DB.prepare(`SELECT chat_id FROM users WHERE chat_id NOT IN (${marks})`)
+    .bind(...retained).all()).results;
   let pending = false;
   for (const user of users) {
     const sent = await env.DB.prepare("SELECT key FROM sent WHERE chat_id = ? AND key IN (?, ?)")
@@ -64,8 +86,8 @@ export async function retireOtherUsers(env) {
   audit.complete = true;
   await env.DB.batch([
     ...["deadlines", "msgs", "guests", "owners", "users"].map(table =>
-      env.DB.prepare(`DELETE FROM ${table} WHERE chat_id NOT IN (?, ?)`).bind(...ids)),
-    env.DB.prepare("DELETE FROM sent WHERE chat_id NOT IN (?, ?, 0)").bind(...ids),
+      env.DB.prepare(`DELETE FROM ${table} WHERE chat_id NOT IN (${marks})`).bind(...retained)),
+    env.DB.prepare(`DELETE FROM sent WHERE chat_id NOT IN (${marks},0)`).bind(...retained),
     env.DB.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
       .bind(CLEANUP_KEY, JSON.stringify(audit)),
   ]);

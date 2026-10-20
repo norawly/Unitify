@@ -1,5 +1,5 @@
 import { normalizeRecord, changes } from "../extension/lib/model.mjs";
-import { privateChatIds } from "./access.js";
+import { privateChatIds, dataChatId, demoSource } from "./access.js";
 import * as M from "./msgs.js";
 import { esc } from "./text.js";
 import { syncContext, linkedSchedule } from "./lms-policy.js";
@@ -208,8 +208,22 @@ export async function applySubmissions(env, chatId) {
     .bind(JSON.stringify(updates), chatId).run();
 }
 export async function notifyChanges(env, user) {
-  const events = (await env.DB.prepare("SELECT * FROM lms_events WHERE chat_id=? AND notified=0 ORDER BY id LIMIT 8").bind(user.chat_id).all()).results;
-  if (!events.length || !permitted(env, user.chat_id)) return;
+  const source = dataChatId(env, user.chat_id), demo = !!demoSource(env, user.chat_id);
+  if (!permitted(env, user.chat_id) && !demo) return;
+  const cursorKey = `demo-lms-cursor:${user.chat_id}`;
+  let events;
+  if (demo) {
+    const saved = await env.DB.prepare("SELECT value FROM meta WHERE key=?").bind(cursorKey).first();
+    if (!saved) {
+      const latest = await env.DB.prepare("SELECT COALESCE(MAX(id),0) id FROM lms_events WHERE chat_id=?").bind(source).first();
+      await env.DB.prepare("INSERT OR IGNORE INTO meta(key,value) VALUES (?,?)").bind(cursorKey, String(latest.id)).run();
+      return; // Do not flood a newly invited viewer with the owner's entire history.
+    }
+    events = (await env.DB.prepare("SELECT * FROM lms_events WHERE chat_id=? AND id>? ORDER BY id LIMIT 8").bind(source, +saved.value).all()).results;
+  } else {
+    events = (await env.DB.prepare("SELECT * FROM lms_events WHERE chat_id=? AND notified=0 ORDER BY id LIMIT 8").bind(source).all()).results;
+  }
+  if (!events.length) return;
   const en = user.lang === "en";
   const lines = events.map(e => {
     const { before, after: r } = JSON.parse(e.payload);
@@ -218,10 +232,13 @@ export async function notifyChanges(env, user) {
     return `<b>${label}: ${esc(value.slice(0, 150))}</b>\n${esc(r.title.slice(0, 100))}\n<i>${esc(r.course.slice(0, 90))}</i>`;
   });
   const result = await M.post(env, user.chat_id, { kind: "lms", text: (en ? "📚 Moodle updates" : "📚 Изменения в Moodle") + "\n\n" + lines.join("\n\n") });
-  if (result.ok) await env.DB.batch(events.map(e => env.DB.prepare("UPDATE lms_events SET notified=1 WHERE id=? AND chat_id=?").bind(e.id, user.chat_id)));
+  if (result.ok) {
+    if (demo) await env.DB.prepare("UPDATE meta SET value=? WHERE key=?").bind(String(events.at(-1).id), cursorKey).run();
+    else await env.DB.batch(events.map(e => env.DB.prepare("UPDATE lms_events SET notified=1 WHERE id=? AND chat_id=?").bind(e.id, user.chat_id)));
+  }
 }
 export async function recordsText(env, chatId, kind, lang) {
-  const rows = (await env.DB.prepare("SELECT data FROM lms_records WHERE chat_id=? AND id LIKE ? ORDER BY changed_at DESC LIMIT 8").bind(chatId, kind + ":%").all()).results;
+  const rows = (await env.DB.prepare("SELECT data FROM lms_records WHERE chat_id=? AND id LIKE ? ORDER BY changed_at DESC LIMIT 8").bind(dataChatId(env, chatId), kind + ":%").all()).results;
   const en = lang === "en";
   if (!rows.length) return en ? "No synced data yet. Connect the extension: /extension" : "Данных пока нет. Подключите расширение: /extension";
   const lines = rows.map(row => {

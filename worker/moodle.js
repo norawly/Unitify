@@ -3,6 +3,7 @@
 
 export const CAL_HOST = "lms.astanait.edu.kz";
 import { applySubmissions } from "./lms-extension.js";
+import { dataChatId, demoSource } from "./access.js";
 export const completed = d => !!d.done_at || d.submission_state === "submitted";
 
 export function validCalUrl(text) {
@@ -68,6 +69,7 @@ export async function fetchCalendar(url) {
 
 /* сверяем с тем, что уже знаем: что появилось и что перенесли */
 export async function syncUser(env, user) {
+  if (demoSource(env, user.chat_id)) return null;
   if (!user.cal_url) return null;
   const got = await fetchCalendar(user.cal_url);
   /* отметку о проверке обновляем раз в десять минут: она нужна только для порядка обхода */
@@ -107,7 +109,7 @@ export async function syncUser(env, user) {
 
 export const upcoming = (env, chatId, from, limit = 10) =>
   env.DB.prepare("SELECT rowid AS id, * FROM deadlines WHERE chat_id = ? AND due >= ? ORDER BY due LIMIT ?")
-    .bind(chatId, from, limit).all().then(r => r.results);
+    .bind(dataChatId(env, chatId), from, limit).all().then(r => r.results);
 
 /* Во время экзаменов и каникул не показываем дедлайны за пределами учебного
    триместра. После каникул фильтр снимается: сохранённый календарь не теряется. */
@@ -129,9 +131,11 @@ export const deadlineById = (env, chatId, id) =>
   env.DB.prepare("SELECT rowid AS id, * FROM deadlines WHERE chat_id = ? AND rowid = ?")
     .bind(chatId, id).first();
 
-export const setDone = (env, chatId, id, done) =>
-  env.DB.prepare("UPDATE deadlines SET done_at = ? WHERE chat_id = ? AND rowid = ?")
+export const setDone = (env, chatId, id, done) => {
+  if (demoSource(env, chatId)) throw new Error("Demo account is read-only");
+  return env.DB.prepare("UPDATE deadlines SET done_at = ? WHERE chat_id = ? AND rowid = ?")
     .bind(done ? Date.now() : null, chatId, id).run();
+};
 
 export const oneDeadline = (env, chatId, uid) =>
   env.DB.prepare("SELECT rowid AS id, * FROM deadlines WHERE chat_id = ? AND uid = ?").bind(chatId, uid).first();

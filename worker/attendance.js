@@ -1,6 +1,7 @@
 import * as T from "./sched.js";
 import { SUBJECT_EN } from "./i18n.js";
 import { courseName } from "../extension/lib/sync-policy.mjs";
+import { dataChatId } from "./access.js";
 
 const OFFSET = 5 * 3600000;
 export function sessionStart(r) {
@@ -44,6 +45,7 @@ export function attendanceTotals(records, now = Date.now()) {
 }
 const inBlock = (r, iso, g) => { const start = sessionStart(r); if (!start) return false; const c = clock(start); return c.iso === iso && c.min >= g.rs && c.min < g.re; };
 export async function attendanceSnapshot(env, chatId) {
+  chatId = dataChatId(env, chatId);
   const rows = (await env.DB.prepare("SELECT data FROM lms_records WHERE chat_id=? AND id LIKE 'attendance:%'").bind(chatId).all()).results;
   const reads = (await env.DB.prepare("SELECT scope,checked_at FROM lms_scope_reads WHERE chat_id=? AND scope LIKE '%:attendance:%'").bind(chatId).all()).results;
   return { records: rows.map(r => JSON.parse(r.data)), reads };

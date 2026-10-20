@@ -5,9 +5,9 @@ import * as db from "./db.js";
 import * as M from "./msgs.js";
 import * as moodle from "./moodle.js";
 import { tg, webhookSecret } from "./tg.js";
-import { loadSchedule, loader, sendClassCard, post, dayPhoto, menuKeyboard } from "./bot.js";
+import { loadSchedule, loader, sendClassCard, post, dayPhoto, menuKeyboard, pinnedSettingsText } from "./bot.js";
 import { t as dict, durIn, SUBJECT_EN } from "./i18n.js";
-import { privateChatIds, retireOtherUsers } from "./access.js";
+import { privateChatIds, retireOtherUsers, demoSource, dataChatId } from "./access.js";
 import { notifyChanges } from "./lms-extension.js";
 
 const BUDGET = 40;            // бесплатный план — до 50 запросов наружу за запуск
@@ -26,18 +26,24 @@ export async function runCron(env, source = "cron") {
   const load = loader(env);
   let budget = BUDGET;
 
-  for (const u of await db.activeUsers(env)) {
+  const active = await db.activeUsers(env);
+  for (const u of active) {
     if (budget <= 0) break;
     // У Telegram старая reply-клавиатура не меняется от одной правки кода.
     // Один раз отправляем новую (без Timetable) и убираем прежнее меню.
     if (await db.markSent(env, u.chat_id, "reply-keyboard-academics-v2")) {
       const lang = u.lang === "en" ? "en" : "ru";
       const r = await post(env, u.chat_id, { kind: "menu",
-        text: lang === "en" ? "Menu updated." : "Кнопки меню обновлены.",
+        text: demoSource(env, u.chat_id) ? pinnedSettingsText(lang) : lang === "en" ? "Menu updated." : "Кнопки меню обновлены.",
         markup: menuKeyboard(env, u) });
-      if (!r.ok) await env.DB.prepare("DELETE FROM sent WHERE chat_id = ? AND key = ?")
+      if (!r.ok && r.error_code !== 403) await env.DB.prepare("DELETE FROM sent WHERE chat_id = ? AND key = ?")
         .bind(u.chat_id, "reply-keyboard-academics-v2").run();
-      else await M.clearClassButtons(env, u.chat_id);
+      else if (r.ok) {
+        await M.clearClassButtons(env, u.chat_id);
+        if (demoSource(env, u.chat_id)) await tg(env, "setChatMenuButton", { chat_id: u.chat_id,
+          menu_button: { type: "web_app", text: dict(lang).menu_site,
+            web_app: { url: `${env.PUBLIC_URL}/${u.person}/` } } });
+      }
       budget -= 2;
     }
     const S = await loadSchedule(env, u.person);
@@ -88,7 +94,8 @@ export async function runCron(env, source = "cron") {
   for (const u of await db.calendarUsers(env)) {
     if (budget <= 0) break;
     budget -= 2;
-    await checkCalendar(env, u, now).catch(e => console.log("moodle", u.chat_id, String(e)));
+    await checkCalendar(env, u, now, active.filter(viewer => dataChatId(env, viewer.chat_id) === u.chat_id))
+      .catch(e => console.log("moodle calendar check failed", e?.name || "Error"));
   }
 
   /* раз в сутки чистим старые отметки */
@@ -134,41 +141,51 @@ async function evening(env, u) {
 }
 
 /* новые и перенесённые задания + напоминания о скором дедлайне */
-async function checkCalendar(env, u, now) {
-  const lang = u.lang === "en" ? "en" : "ru", L = dict(lang), off = +(env.TZ_OFFSET_MIN || 300);
+async function checkCalendar(env, u, now, recipients = [u]) {
+  const off = +(env.TZ_OFFSET_MIN || 300);
   const initial = !u.cal_hash;                     // первое подключение: список и так покажем, молчим
   const r = await moodle.syncUser(env, u);
   if (!r || !r.ok) return;
   const S = await loadSchedule(env, u.person);
 
-  if (!initial) {
-    const soon = list => list.filter(d => d.due > Date.now() && moodle.visibleDeadline(d, S, Date.now(), off))
+  // Poll the owner's calendar once; deliver independently without copying its URL
+  // or letting viewers mark the owner's homework as completed.
+  const upcoming = await moodle.visibleUpcoming(env, u.chat_id, S, Date.now(), 30, off);
+  const changed = [];
+  if (!initial) for (const [events, key] of [[r.added || [], "new"], [r.moved || [], "mv"]]) {
+    const soon = events.filter(d => d.due > Date.now() && moodle.visibleDeadline(d, S, Date.now(), off))
       .sort((a, b) => a.due - b.due).slice(0, 2);
-    for (const [events, key, head] of [[r.added || [], "new", L.new_deadline], [r.moved || [], "mv", L.moved_deadline]])
-      for (const event of soon(events)) {
-        const d = await moodle.oneDeadline(env, u.chat_id, event.uid);
-        if (d && !moodle.completed(d) && await db.markSent(env, u.chat_id, `dl:${key}:${d.uid}:${d.due}`))
-          await post(env, u.chat_id, { kind: "deadline", text: deadlineText(head, d, lang, off),
-            markup: doneMarkup(d, L) });
-      }
+    for (const event of soon) {
+      const d = await moodle.oneDeadline(env, u.chat_id, event.uid);
+      if (d && !moodle.completed(d)) changed.push({ d, key });
+    }
   }
+  for (const viewer of recipients) {
+    const target = viewer.chat_id, lang = viewer.lang === "en" ? "en" : "ru", L = dict(lang);
+    const readOnly = !!demoSource(env, target);
+    for (const { d, key } of changed)
+      if (await db.markSent(env, target, `dl:${key}:${d.uid}:${d.due}`))
+        await post(env, target, { kind: "deadline",
+          text: deadlineText(key === "new" ? L.new_deadline : L.moved_deadline, d, lang, off),
+          markup: readOnly ? undefined : doneMarkup(d, L) });
 
-  /* расхождение с нашим расписанием — не чаще раза в сутки */
-  if (r.events && await db.markSent(env, u.chat_id, `${now.iso}:cmp`)) {
-    const diff = S ? compare(S, r.events, now, off, lang) : [];
-    if (diff.length)
-      await post(env, u.chat_id, { text: `${L.moodle_diff}\n\n${diff.slice(0, 5).join("\n")}\n\n<i>${L.moodle_diff_note}</i>` });
-  }
+    /* расхождение с нашим расписанием — не чаще раза в сутки */
+    if (r.events && await db.markSent(env, target, `${now.iso}:cmp`)) {
+      const diff = S ? compare(S, r.events, now, off, lang) : [];
+      if (diff.length)
+        await post(env, target, { text: `${L.moodle_diff}\n\n${diff.slice(0, 5).join("\n")}\n\n<i>${L.moodle_diff_note}</i>` });
+    }
 
-  /* за 12/6/3/2/1 час и 30 минут до сдачи; ручная отметка выключает напоминания */
-  for (const d of await moodle.visibleUpcoming(env, u.chat_id, S, Date.now(), 30, off)) {
-    if (moodle.completed(d)) continue;
-    const left = Math.round((d.due - Date.now()) / 60000);
-    for (const lead of DUE_LEADS)
-      if (left > lead - 5 && left <= lead && await db.markSent(env, u.chat_id, `dl:${lead}:${d.uid}:${d.due}`))
-        await post(env, u.chat_id, { kind: "deadline",
-          text: deadlineText(L.due_soon(durIn(left, lang)), d, lang, off),
-          markup: doneMarkup(d, L) });
+    /* за 12/6/3/2/1 час и 30 минут до сдачи; ручная отметка выключает напоминания */
+    for (const d of upcoming) {
+      if (moodle.completed(d)) continue;
+      const left = Math.round((d.due - Date.now()) / 60000);
+      for (const lead of DUE_LEADS)
+        if (left > lead - 5 && left <= lead && await db.markSent(env, target, `dl:${lead}:${d.uid}:${d.due}`))
+          await post(env, target, { kind: "deadline",
+            text: deadlineText(L.due_soon(durIn(left, lang)), d, lang, off),
+            markup: readOnly ? undefined : doneMarkup(d, L) });
+    }
   }
 }
 

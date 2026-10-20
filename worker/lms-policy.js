@@ -1,10 +1,11 @@
 import { blocks, KEYS } from "./sched.js";
 import { SUBJECT_EN } from "./i18n.js";
 import { DEFAULT_POLICY, RELEASE } from "../extension/lib/sync-policy.mjs";
+import { dataChatId } from "./access.js";
 
 // Authenticated, account-specific data only; no Moodle credentials or HTML.
 export async function linkedSchedule(env, chatId) {
-  const user = await env.DB.prepare("SELECT person FROM users WHERE chat_id=?").bind(chatId).first();
+  const user = await env.DB.prepare("SELECT person FROM users WHERE chat_id=?").bind(dataChatId(env, chatId)).first();
   if (env.ASSETS && /^[a-z0-9-]{1,40}$/.test(user?.person || "")) {
     const response = await env.ASSETS.fetch(new Request(`https://assets.local/${user.person}/schedule.json`));
     if (response.ok) {
